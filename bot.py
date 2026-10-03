@@ -38,6 +38,23 @@ if not TOKEN:
 
 
 # =========================================================
+# COURSES
+# =========================================================
+
+COURSES = {
+    "classes": {
+        "name": "🎓 کلاس‌های آموزش از صفر کنکور MIRA",
+        "url": "https://t.me/mirakunkorclss"
+    },
+
+    "counseling": {
+        "name": "🧭 پلن مشاوره‌ای صفر تا صد تیم MIRA",
+        "url": "https://t.me/miraprivatecahnnel"
+    }
+}
+
+
+# =========================================================
 # REGISTRATION QUESTIONS
 # =========================================================
 
@@ -102,7 +119,10 @@ QUESTIONS = [
     },
     {
         "key": "phone",
-        "question": "📞 برای اینکه ادمین MIRA بتونه باهات تماس بگیره، شماره تماست رو ارسال کن:",
+        "question": (
+            "📞 برای اینکه ادمین MIRA بتونه باهات تماس بگیره، "
+            "شماره تماست رو ارسال کن:"
+        ),
         "type": "contact"
     }
 ]
@@ -339,6 +359,45 @@ def check_membership_and_continue(chat_id):
         send_main_menu(chat_id)
     else:
         send_membership_gate(chat_id)
+
+
+# =========================================================
+# COURSE MENU
+# =========================================================
+
+def courses_keyboard():
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "🎓 کلاس‌های آموزش از صفر کنکور MIRA",
+                    "url": COURSES["classes"]["url"]
+                }
+            ],
+            [
+                {
+                    "text": "🧭 پلن مشاوره‌ای صفر تا صد تیم MIRA",
+                    "url": COURSES["counseling"]["url"]
+                }
+            ],
+            [
+                {
+                    "text": "🔙 بازگشت به منوی اصلی",
+                    "callback_data": "back_to_main"
+                }
+            ]
+        ]
+    }
+
+
+def send_courses_menu(chat_id):
+    send(
+        chat_id,
+        "🎓 دوره‌های MIRA\n\n"
+        "برای مشاهده توضیحات کامل هر دوره، "
+        "روی دوره موردنظرت بزن. 👇",
+        courses_keyboard()
+    )
 
 
 # =========================================================
@@ -612,6 +671,11 @@ def handle_callback_query(callback_query):
 
     chat_id = message["chat"]["id"]
 
+
+    # -----------------------------------------------------
+    # MEMBERSHIP
+    # -----------------------------------------------------
+
     if data == "check_membership":
 
         if is_channel_member(chat_id):
@@ -641,12 +705,33 @@ def handle_callback_query(callback_query):
                 membership_keyboard()
             )
 
+        return
+
+
+    # -----------------------------------------------------
+    # BACK TO MAIN
+    # -----------------------------------------------------
+
+    if data == "back_to_main":
+
+        answer_callback(
+            callback_id,
+            "برگشتیم به منوی اصلی 👌"
+        )
+
+        send_main_menu(
+            chat_id
+        )
+
+        return
+
 
 # =========================================================
 # MAIN MENU ACTIONS
 # =========================================================
 
 def handle_main_menu_action(chat_id, text):
+
 
     # -----------------------------------------------------
     # REGISTRATION
@@ -690,13 +775,16 @@ def handle_main_menu_action(chat_id, text):
 
     if text == "🎓 معرفی دوره‌ها":
 
-        send(
-            chat_id,
-            "🎓 معرفی دوره‌های MIRA\n\n"
-            "این بخش در مرحله بعد کامل می‌شه.\n\n"
-            "اینجا قراره بتونی دوره‌های MIRA رو ببینی "
-            "و برای اطلاعات کامل هر دوره وارد کانال "
-            "اختصاصی همون دوره بشی. ✨"
+        if not is_channel_member(chat_id):
+
+            send_membership_gate(
+                chat_id
+            )
+
+            return True
+
+        send_courses_menu(
+            chat_id
         )
 
         return True
