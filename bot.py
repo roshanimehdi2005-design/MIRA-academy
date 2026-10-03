@@ -1,10 +1,11 @@
 import os
 import json
 import sqlite3
-import logging
-import requests
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse
+
+import requests
 
 
 # =========================================================
@@ -14,9 +15,9 @@ from datetime import datetime, timezone
 TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
 ADMIN_CHAT_IDS = [
-    x.strip()
+    int(x.strip())
     for x in os.getenv("ADMIN_CHAT_IDS", "").split(",")
-    if x.strip()
+    if x.strip().isdigit()
 ]
 
 DB_PATH = os.getenv("DB_PATH", "mira.db")
@@ -26,15 +27,9 @@ API = f"https://api.telegram.org/bot{TOKEN}"
 CHANNEL_USERNAME = "@miracampus"
 CHANNEL_URL = "https://t.me/miracampus"
 
+WEBHOOK_PATH = "/telegram-webhook"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
-
-
-if not TOKEN:
-    raise SystemExit("BOT_TOKEN is missing.")
+SUBSCRIPTION_DAYS = 90
 
 
 # =========================================================
@@ -46,7 +41,6 @@ COURSES = {
         "name": "🎓 کلاس‌های آموزش از صفر کنکور MIRA",
         "url": "https://t.me/mirakunkorclss"
     },
-
     "counseling": {
         "name": "🧭 پلن مشاوره‌ای صفر تا صد تیم MIRA",
         "url": "https://t.me/miraprivatecahnnel"
@@ -61,13 +55,11 @@ COURSES = {
 QUESTIONS = [
     {
         "key": "full_name",
-        "question": "👤 نام و نام خانوادگی‌ات رو وارد کن:",
-        "type": "text"
+        "text": "👤 نام و نام خانوادگی‌ات رو وارد کن:"
     },
     {
         "key": "grade",
-        "question": "📚 پایه تحصیلی‌ات کدومه؟",
-        "type": "options",
+        "text": "🎓 پایه تحصیلی‌ات رو انتخاب کن:",
         "options": [
             "دهم",
             "یازدهم",
@@ -78,13 +70,11 @@ QUESTIONS = [
     },
     {
         "key": "field",
-        "question": "🧪 رشته تحصیلی‌ات چیه؟",
-        "type": "text"
+        "text": "📚 رشته تحصیلی‌ات چیه؟"
     },
     {
         "key": "goal",
-        "question": "🎯 هدفت از مشاوره یا آموزش چیه؟",
-        "type": "options",
+        "text": "🎯 مهم‌ترین هدفت چیه؟",
         "options": [
             "موفقیت در مدرسه و امتحانات",
             "آمادگی برای کنکور",
@@ -95,8 +85,7 @@ QUESTIONS = [
     },
     {
         "key": "problem",
-        "question": "🧩 مهم‌ترین مشکل درسی‌ات در حال حاضر چیه؟",
-        "type": "options",
+        "text": "🧩 بزرگ‌ترین مشکلت در مسیر درس خوندن چیه؟",
         "options": [
             "یادگیری و فهم مطالب",
             "برنامه‌ریزی",
@@ -110,37 +99,28 @@ QUESTIONS = [
     },
     {
         "key": "extra",
-        "question": (
-            "📝 اگر توضیح یا نکته‌ای درباره شرایطت هست "
-            "که فکر می‌کنی باید بدونیم، اینجا بنویس.\n\n"
-            "اگر موردی نداری، بنویس «ندارم»."
-        ),
-        "type": "text"
+        "text": "📝 اگر نکته یا توضیح دیگه‌ای هست که فکر می‌کنی باید بدونیم، برامون بنویس.\n\nاگر موردی نداری، بنویس «ندارم»."
     },
     {
         "key": "phone",
-        "question": (
-            "📞 برای اینکه ادمین MIRA بتونه باهات تماس بگیره، "
-            "شماره تماست رو ارسال کن:"
-        ),
-        "type": "contact"
+        "text": "📱 برای اینکه ادمین MIRA بتونه باهات تماس بگیره، شماره تماست رو ارسال کن:"
     }
 ]
 
 
 LABELS = {
     "full_name": "نام و نام خانوادگی",
-    "grade": "پایه تحصیلی",
+    "grade": "پایه",
     "field": "رشته",
     "goal": "هدف اصلی",
-    "problem": "مهم‌ترین مشکل درسی",
-    "extra": "توضیحات تکمیلی",
+    "problem": "بزرگ‌ترین مشکل",
+    "extra": "توضیحات بیشتر",
     "phone": "شماره تماس"
 }
 
 
 # =========================================================
-# USER STATES
+# IN-MEMORY USER STATES
 # =========================================================
 
 users = {}
@@ -148,9 +128,9 @@ users = {}
 
 def new_user():
     return {
+        "mode": None,
         "step": 0,
-        "data": {},
-        "completed": False
+        "data": {}
     }
 
 
@@ -158,14 +138,32 @@ def new_user():
 # DATABASE
 # =========================================================
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
+def get_db():
+    return sqlite3.connect(DB_PATH)
 
-    conn.execute("""
+
+def init_db():
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Existing students table
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS mira_students (
             chat_id INTEGER PRIMARY KEY,
             username TEXT,
             data_json TEXT,
+            created_at TEXT
+        )
+    """)
+
+    # Payment / renewal authentication requests
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS mira_payment_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL,
+            username TEXT,
+            phone TEXT,
+            status TEXT DEFAULT 'PENDING',
             created_at TEXT
         )
     """)
@@ -175,16 +173,13 @@ def init_db():
 
 
 def save_student(chat_id, username, data):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db()
+    cur = conn.cursor()
 
-    conn.execute("""
-        INSERT INTO mira_students
+    cur.execute("""
+        INSERT OR REPLACE INTO mira_students
         (chat_id, username, data_json, created_at)
         VALUES (?, ?, ?, ?)
-        ON CONFLICT(chat_id) DO UPDATE SET
-            username = excluded.username,
-            data_json = excluded.data_json,
-            created_at = excluded.created_at
     """, (
         chat_id,
         username,
@@ -196,44 +191,63 @@ def save_student(chat_id, username, data):
     conn.close()
 
 
+def save_payment_request(chat_id, username, phone):
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO mira_payment_requests
+        (chat_id, username, phone, status, created_at)
+        VALUES (?, ?, ?, 'PENDING', ?)
+    """, (
+        chat_id,
+        username,
+        phone,
+        datetime.now(timezone.utc).isoformat()
+    ))
+
+    request_id = cur.lastrowid
+
+    conn.commit()
+    conn.close()
+
+    return request_id
+
+
 # =========================================================
 # TELEGRAM API
 # =========================================================
 
-def telegram(method, data):
-    response = requests.post(
-        f"{API}/{method}",
-        json=data,
-        timeout=30
-    )
-
-    response.raise_for_status()
-
-    result = response.json()
-
-    if not result.get("ok"):
-        raise RuntimeError(
-            f"Telegram API error: {result}"
+def telegram(method, data=None):
+    try:
+        response = requests.post(
+            f"{API}/{method}",
+            json=data or {},
+            timeout=20
         )
 
-    return result
+        return response.json()
+
+    except Exception as e:
+        print("Telegram API error:", e)
+        return None
 
 
-def send(chat_id, text, markup=None):
+def send(chat_id, text, reply_markup=None):
     data = {
         "chat_id": chat_id,
         "text": text
     }
 
-    if markup is not None:
-        data["reply_markup"] = markup
+    if reply_markup:
+        data["reply_markup"] = reply_markup
 
     return telegram("sendMessage", data)
 
 
-def answer_callback(callback_query_id, text=None):
+def answer_callback(callback_id, text=None):
     data = {
-        "callback_query_id": callback_query_id
+        "callback_query_id": callback_id
     }
 
     if text:
@@ -247,30 +261,24 @@ def answer_callback(callback_query_id, text=None):
 # =========================================================
 
 def is_channel_member(chat_id):
-    try:
-        result = telegram(
-            "getChatMember",
-            {
-                "chat_id": CHANNEL_USERNAME,
-                "user_id": chat_id
-            }
-        )
+    result = telegram(
+        "getChatMember",
+        {
+            "chat_id": CHANNEL_USERNAME,
+            "user_id": chat_id
+        }
+    )
 
-        status = result["result"]["status"]
-
-        return status in [
-            "creator",
-            "administrator",
-            "member"
-        ]
-
-    except Exception:
-        logging.exception(
-            "Membership check failed for %s",
-            chat_id
-        )
-
+    if not result or not result.get("ok"):
         return False
+
+    status = result["result"].get("status")
+
+    return status in [
+        "creator",
+        "administrator",
+        "member"
+    ]
 
 
 def membership_keyboard():
@@ -295,11 +303,8 @@ def membership_keyboard():
 def send_membership_gate(chat_id):
     send(
         chat_id,
-        "سلام رفیق 👋\n\n"
-        "برای استفاده از بات MIRA، ابتدا باید عضو "
-        "کانال اصلی MIRA بشی. 📢\n\n"
-        "بعد از عضویت، روی «✅ بررسی عضویت» بزن "
-        "تا وارد بات بشی. 🚀",
+        "برای استفاده از خدمات MIRA ابتدا باید عضو کانال اصلی ما بشی. 👇\n\n"
+        "بعد از عضویت روی «✅ بررسی عضویت» بزن.",
         membership_keyboard()
     )
 
@@ -311,31 +316,11 @@ def send_membership_gate(chat_id):
 def main_menu_keyboard():
     return {
         "keyboard": [
-            [
-                {
-                    "text": "📝 ثبت‌نام و درخواست مشاوره"
-                }
-            ],
-            [
-                {
-                    "text": "🎓 معرفی دوره‌ها"
-                }
-            ],
-            [
-                {
-                    "text": "💳 پرداخت و تمدید اشتراک"
-                }
-            ],
-            [
-                {
-                    "text": "👤 پنل من"
-                }
-            ],
-            [
-                {
-                    "text": "🆘 پشتیبانی"
-                }
-            ]
+            [{"text": "📝 ثبت‌نام و درخواست مشاوره"}],
+            [{"text": "🎓 معرفی دوره‌ها"}],
+            [{"text": "💳 پرداخت و تمدید اشتراک"}],
+            [{"text": "👤 پنل من"}],
+            [{"text": "🆘 پشتیبانی"}]
         ],
         "resize_keyboard": True
     }
@@ -354,15 +339,8 @@ def send_main_menu(chat_id):
     )
 
 
-def check_membership_and_continue(chat_id):
-    if is_channel_member(chat_id):
-        send_main_menu(chat_id)
-    else:
-        send_membership_gate(chat_id)
-
-
 # =========================================================
-# COURSE MENU
+# COURSES
 # =========================================================
 
 def courses_keyboard():
@@ -401,117 +379,10 @@ def send_courses_menu(chat_id):
 
 
 # =========================================================
-# KEYBOARDS
-# =========================================================
-
-def remove_keyboard():
-    return {
-        "remove_keyboard": True
-    }
-
-
-def contact_keyboard():
-    return {
-        "keyboard": [
-            [
-                {
-                    "text": "📞 ارسال شماره تماس",
-                    "request_contact": True
-                }
-            ]
-        ],
-        "resize_keyboard": True,
-        "one_time_keyboard": True
-    }
-
-
-def option_keyboard(options):
-    rows = []
-
-    for i in range(0, len(options), 2):
-        row = []
-
-        for option in options[i:i + 2]:
-            row.append({
-                "text": option
-            })
-
-        rows.append(row)
-
-    return {
-        "keyboard": rows,
-        "resize_keyboard": True,
-        "one_time_keyboard": True
-    }
-
-
-def confirmation_keyboard():
-    return {
-        "keyboard": [
-            [
-                {
-                    "text": "✅ تأیید و ارسال"
-                }
-            ],
-            [
-                {
-                    "text": "✏️ اصلاح اطلاعات"
-                },
-                {
-                    "text": "🔄 شروع دوباره"
-                }
-            ]
-        ],
-        "resize_keyboard": True,
-        "one_time_keyboard": True
-    }
-
-
-# =========================================================
-# QUESTIONS FLOW
+# REGISTRATION
 # =========================================================
 
 def ask_question(chat_id):
-    user = users.get(chat_id)
-
-    if not user:
-        return
-
-    step = user["step"]
-
-    if step >= len(QUESTIONS):
-        show_summary(chat_id)
-        return
-
-    question = QUESTIONS[step]
-    question_type = question["type"]
-
-    if question_type == "contact":
-
-        send(
-            chat_id,
-            question["question"],
-            contact_keyboard()
-        )
-
-    elif question_type == "options":
-
-        send(
-            chat_id,
-            question["question"],
-            option_keyboard(question["options"])
-        )
-
-    else:
-
-        send(
-            chat_id,
-            question["question"],
-            remove_keyboard()
-        )
-
-
-def process_answer(chat_id, answer):
     user = users.get(chat_id)
 
     if not user:
@@ -521,159 +392,399 @@ def process_answer(chat_id, answer):
     step = user["step"]
 
     if step >= len(QUESTIONS):
+        finish_registration(chat_id)
         return
 
     question = QUESTIONS[step]
 
-    if question["type"] == "options":
+    keyboard = None
 
-        if answer not in question["options"]:
+    if "options" in question:
+        keyboard = {
+            "keyboard": [
+                [{"text": option}]
+                for option in question["options"]
+            ],
+            "resize_keyboard": True,
+            "one_time_keyboard": True
+        }
 
-            send(
-                chat_id,
-                "لطفاً یکی از گزینه‌های نمایش‌داده‌شده "
-                "رو انتخاب کن. 👇",
-                option_keyboard(question["options"])
-            )
+    elif question["key"] == "phone":
+        keyboard = {
+            "keyboard": [
+                [
+                    {
+                        "text": "📱 ارسال شماره تماس",
+                        "request_contact": True
+                    }
+                ]
+            ],
+            "resize_keyboard": True,
+            "one_time_keyboard": True
+        }
 
-            return
-
-    user["data"][question["key"]] = answer
-    user["step"] += 1
-
-    logging.info(
-        "User %s answered %s",
+    send(
         chat_id,
-        question["key"]
+        question["text"],
+        keyboard
+    )
+
+
+def start_registration(chat_id):
+    users[chat_id] = new_user()
+    users[chat_id]["mode"] = "registration"
+    users[chat_id]["step"] = 0
+
+    send(
+        chat_id,
+        "عالیه رفیق 👌\n\n"
+        "برای اینکه بتونیم دقیق‌تر راهنماییت کنیم، "
+        "چند سؤال کوتاه ازت می‌پرسیم.\n"
+        "در آخر اطلاعاتت برای تیم MIRA ارسال می‌شه. 🤍"
     )
 
     ask_question(chat_id)
 
 
-# =========================================================
-# SUMMARY
-# =========================================================
-
-def build_summary(data):
-
-    lines = [
-        "📋 اطلاعات ثبت‌شده",
-        ""
-    ]
-
-    for question in QUESTIONS:
-
-        key = question["key"]
-
-        value = data.get(
-            key,
-            "ثبت نشده"
-        )
-
-        lines.append(
-            f"• {LABELS[key]}: {value}"
-        )
-
-    return "\n".join(lines)
-
-
-def show_summary(chat_id):
-
+def finish_registration(chat_id):
     user = users.get(chat_id)
 
     if not user:
         return
 
-    user["completed"] = True
+    data = user["data"]
 
-    text = (
-        "🔎 لطفاً اطلاعاتت رو بررسی کن:\n\n"
-        + build_summary(user["data"])
-        + "\n\n"
-        "اگر همه‌چیز درسته، "
-        "«تأیید و ارسال» رو بزن. ✅\n"
-        "اگر نیاز به تغییر داره، "
-        "«اصلاح اطلاعات» رو بزن."
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT username FROM mira_students WHERE chat_id = ?",
+        (chat_id,)
     )
+
+    old = cur.fetchone()
+    username = old[0] if old else ""
+
+    conn.close()
+
+    save_student(chat_id, username, data)
+
+    summary = (
+        "📥 درخواست جدید MIRA\n\n"
+        f"👤 نام: {data.get('full_name', '-')}\n"
+        f"🎓 پایه: {data.get('grade', '-')}\n"
+        f"📚 رشته: {data.get('field', '-')}\n"
+        f"🎯 هدف: {data.get('goal', '-')}\n"
+        f"🧩 مشکل اصلی: {data.get('problem', '-')}\n"
+        f"📝 توضیحات: {data.get('extra', '-')}\n"
+        f"📱 شماره تماس: {data.get('phone', '-')}\n\n"
+        f"🆔 Chat ID: {chat_id}"
+    )
+
+    for admin_id in ADMIN_CHAT_IDS:
+        send(admin_id, summary)
 
     send(
         chat_id,
-        text,
-        confirmation_keyboard()
+        "✅ اطلاعاتت با موفقیت ثبت شد.\n\n"
+        "ادمین MIRA باهات تماس خواهد گرفت.\n\n"
+        "از اعتمادت ممنونیم رفیق 🤍",
+        main_menu_keyboard()
+    )
+
+    users.pop(chat_id, None)
+
+
+# =========================================================
+# PAYMENT / RENEWAL — STAGE 4
+# =========================================================
+
+def payment_start_keyboard():
+    return {
+        "keyboard": [
+            [
+                {
+                    "text": "📱 ارسال شماره تماس",
+                    "request_contact": True
+                }
+            ],
+            [
+                {
+                    "text": "🔙 بازگشت به منوی اصلی"
+                }
+            ]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": True
+    }
+
+
+def start_payment_request(chat_id):
+    users[chat_id] = new_user()
+    users[chat_id]["mode"] = "payment_authentication"
+
+    send(
+        chat_id,
+        "💳 پرداخت و تمدید اشتراک MIRA\n\n"
+        "اشتراک‌های MIRA به‌صورت **۹۰ روزه** ارائه می‌شن.\n\n"
+        "برای شروع فرآیند پرداخت یا تمدید، "
+        "ابتدا شماره تماست رو ارسال کن تا درخواستت برای "
+        "تیم MIRA ثبت و احراز بشه.\n\n"
+        "بعد از بررسی توسط ادمین یا مشاورت، "
+        "کد تأیید در اختیارت قرار می‌گیره. 🔐",
+        payment_start_keyboard()
+    )
+
+
+def handle_payment_phone(chat_id, username, phone):
+    request_id = save_payment_request(
+        chat_id=chat_id,
+        username=username,
+        phone=phone
+    )
+
+    admin_message = (
+        "🔐 درخواست احراز هویت پرداخت / تمدید\n\n"
+        f"🆔 درخواست: #{request_id}\n"
+        f"👤 Username: @{username}" if username else
+        f"🔐 درخواست احراز هویت پرداخت / تمدید\n\n"
+        f"🆔 درخواست: #{request_id}"
+    )
+
+    admin_message += (
+        f"\n📱 شماره تماس: {phone}"
+        f"\n🆔 Chat ID: {chat_id}"
+        f"\n⏳ وضعیت: در انتظار بررسی"
+    )
+
+    for admin_id in ADMIN_CHAT_IDS:
+        send(admin_id, admin_message)
+
+    send(
+        chat_id,
+        "✅ درخواستت با موفقیت ثبت شد.\n\n"
+        "اطلاعاتت برای تیم MIRA ارسال شد و بعد از بررسی، "
+        "کد تأییدت رو از ادمین یا مشاورت دریافت می‌کنی. 🔐\n\n"
+        "بعد از دریافت کد، در مرحله بعد می‌تونی اون رو داخل بات وارد کنی. 🤍",
+        main_menu_keyboard()
+    )
+
+    users.pop(chat_id, None)
+
+
+# =========================================================
+# PLACEHOLDER USER PANEL
+# =========================================================
+
+def send_user_panel(chat_id):
+    send(
+        chat_id,
+        "👤 پنل من\n\n"
+        "بخش پنل شخصی MIRA در مرحله بعد تکمیل می‌شه. 🔐\n\n"
+        "در این بخش اطلاعاتی مثل دوره، مشاور، "
+        "تاریخ شروع، تاریخ پایان و روزهای باقی‌مانده "
+        "اشتراک نمایش داده خواهد شد.",
+        main_menu_keyboard()
     )
 
 
 # =========================================================
-# ADMIN REPORT
+# SUPPORT
 # =========================================================
 
-def build_admin_report(chat_id, msg, data):
-
-    telegram_user = msg.get(
-        "from",
-        {}
+def send_support(chat_id):
+    send(
+        chat_id,
+        "🆘 پشتیبانی MIRA\n\n"
+        "اگر در مورد ثبت‌نام، دوره‌ها، مشاوره یا اشتراکت "
+        "سؤالی داری، پیام بده تا تیم MIRA راهنماییت کنه. 🤍",
+        main_menu_keyboard()
     )
-
-    username = telegram_user.get(
-        "username",
-        ""
-    )
-
-    lines = [
-        "🔔 لید جدید MIRA",
-        "",
-        build_summary(data),
-        "",
-        "━━━━━━━━━━━━━━",
-        f"🆔 Telegram ID: {chat_id}"
-    ]
-
-    if username:
-
-        lines.append(
-            f"🔗 Username: @{username}"
-        )
-
-    else:
-
-        lines.append(
-            "🔗 Username: ندارد"
-        )
-
-    lines.append(
-        "━━━━━━━━━━━━━━"
-    )
-
-    return "\n".join(lines)
 
 
 # =========================================================
-# CALLBACK QUERIES
+# TEXT HANDLER
 # =========================================================
 
-def handle_callback_query(callback_query):
+def handle_message(message):
+    chat = message.get("chat", {})
+    chat_id = chat.get("id")
 
-    callback_id = callback_query.get(
-        "id"
-    )
-
-    data = callback_query.get(
-        "data",
-        ""
-    )
-
-    message = callback_query.get(
-        "message"
-    )
-
-    if not message:
+    if not chat_id:
         return
 
-    chat_id = message["chat"]["id"]
+    username = chat.get("username", "")
 
+    text = message.get("text", "")
+
+    contact = message.get("contact")
 
     # -----------------------------------------------------
-    # MEMBERSHIP
+    # /start
+    # -----------------------------------------------------
+
+    if text.startswith("/start"):
+        users.pop(chat_id, None)
+
+        if not is_channel_member(chat_id):
+            send_membership_gate(chat_id)
+            return
+
+        send_main_menu(chat_id)
+        return
+
+    # -----------------------------------------------------
+    # Membership gate
+    # -----------------------------------------------------
+
+    if not is_channel_member(chat_id):
+        send_membership_gate(chat_id)
+        return
+
+    # -----------------------------------------------------
+    # Existing user state
+    # -----------------------------------------------------
+
+    user = users.get(chat_id)
+
+    if user:
+
+        mode = user.get("mode")
+
+        # ---------------------------------------------
+        # Registration
+        # ---------------------------------------------
+
+        if mode == "registration":
+
+            step = user["step"]
+            question = QUESTIONS[step]
+            key = question["key"]
+
+            if key == "phone":
+
+                if contact:
+                    phone = contact.get("phone_number", "")
+                else:
+                    phone = text.strip()
+
+                if not phone:
+                    send(
+                        chat_id,
+                        "لطفاً شماره تماست رو ارسال کن. 📱"
+                    )
+                    return
+
+                user["data"]["phone"] = phone
+                user["step"] += 1
+
+                finish_registration(chat_id)
+                return
+
+            if "options" in question:
+                if text not in question["options"]:
+                    send(
+                        chat_id,
+                        "لطفاً یکی از گزینه‌های مشخص‌شده رو انتخاب کن. 👇"
+                    )
+                    return
+
+            if not text.strip():
+                send(
+                    chat_id,
+                    "لطفاً پاسخ این سؤال رو وارد کن. 👇"
+                )
+                return
+
+            user["data"][key] = text.strip()
+            user["step"] += 1
+
+            ask_question(chat_id)
+            return
+
+        # ---------------------------------------------
+        # Payment authentication
+        # ---------------------------------------------
+
+        if mode == "payment_authentication":
+
+            if contact:
+                phone = contact.get("phone_number", "")
+            else:
+                phone = text.strip()
+
+            if not phone:
+                send(
+                    chat_id,
+                    "لطفاً شماره تماست رو ارسال کن. 📱"
+                )
+                return
+
+            handle_payment_phone(
+                chat_id=chat_id,
+                username=username,
+                phone=phone
+            )
+            return
+
+    # -----------------------------------------------------
+    # Main menu
+    # -----------------------------------------------------
+
+    if text == "📝 ثبت‌نام و درخواست مشاوره":
+
+        start_registration(chat_id)
+        return
+
+    if text == "🎓 معرفی دوره‌ها":
+
+        send_courses_menu(chat_id)
+        return
+
+    if text == "💳 پرداخت و تمدید اشتراک":
+
+        start_payment_request(chat_id)
+        return
+
+    if text == "👤 پنل من":
+
+        send_user_panel(chat_id)
+        return
+
+    if text == "🆘 پشتیبانی":
+
+        send_support(chat_id)
+        return
+
+    # -----------------------------------------------------
+    # Unknown message
+    # -----------------------------------------------------
+
+    send(
+        chat_id,
+        "از منوی پایین می‌تونی بخش موردنظرت رو انتخاب کنی. 👇",
+        main_menu_keyboard()
+    )
+
+
+# =========================================================
+# CALLBACK HANDLER
+# =========================================================
+
+def handle_callback(callback_query):
+    callback_id = callback_query.get("id")
+
+    data = callback_query.get("data")
+
+    message = callback_query.get("message", {})
+    chat = message.get("chat", {})
+    chat_id = chat.get("id")
+
+    if not chat_id:
+        return
+
+    # -----------------------------------------------------
+    # Membership check
     # -----------------------------------------------------
 
     if data == "check_membership":
@@ -685,9 +796,7 @@ def handle_callback_query(callback_query):
                 "عضویتت تأیید شد ✅"
             )
 
-            send_main_menu(
-                chat_id
-            )
+            send_main_menu(chat_id)
 
         else:
 
@@ -696,752 +805,158 @@ def handle_callback_query(callback_query):
                 "هنوز عضویتت تأیید نشده ❌"
             )
 
-            send(
-                chat_id,
-                "رفیق، هنوز عضویتت در کانال MIRA "
-                "تأیید نشده. 👇\n\n"
-                "اول عضو کانال شو و بعد دوباره "
-                "«✅ بررسی عضویت» رو بزن.",
-                membership_keyboard()
-            )
+            send_membership_gate(chat_id)
 
         return
 
-
     # -----------------------------------------------------
-    # BACK TO MAIN
+    # Back to main
     # -----------------------------------------------------
 
     if data == "back_to_main":
 
-        answer_callback(
-            callback_id,
-            "برگشتیم به منوی اصلی 👌"
-        )
+        answer_callback(callback_id)
 
-        send_main_menu(
-            chat_id
-        )
+        send_main_menu(chat_id)
 
         return
+
+    answer_callback(callback_id)
 
 
 # =========================================================
-# MAIN MENU ACTIONS
+# HTTP SERVER
 # =========================================================
-
-def handle_main_menu_action(chat_id, text):
-
-
-    # -----------------------------------------------------
-    # REGISTRATION
-    # -----------------------------------------------------
-
-    if text == "📝 ثبت‌نام و درخواست مشاوره":
-
-        if not is_channel_member(chat_id):
-
-            send_membership_gate(
-                chat_id
-            )
-
-            return True
-
-
-        users[chat_id] = new_user()
-
-
-        send(
-            chat_id,
-            "عالیه رفیق 👌\n\n"
-            "برای اینکه تیم MIRA بتونه "
-            "بهترین مسیر رو برات مشخص کنه، "
-            "چند سؤال کوتاه ازت می‌پرسیم.\n\n"
-            "در پایان، اطلاعاتت رو بررسی می‌کنی "
-            "و بعد برای تیم MIRA ارسال می‌شه. 🚀"
-        )
-
-
-        ask_question(
-            chat_id
-        )
-
-        return True
-
-
-    # -----------------------------------------------------
-    # COURSES
-    # -----------------------------------------------------
-
-    if text == "🎓 معرفی دوره‌ها":
-
-        if not is_channel_member(chat_id):
-
-            send_membership_gate(
-                chat_id
-            )
-
-            return True
-
-        send_courses_menu(
-            chat_id
-        )
-
-        return True
-
-
-    # -----------------------------------------------------
-    # PAYMENT
-    # -----------------------------------------------------
-
-    if text == "💳 پرداخت و تمدید اشتراک":
-
-        send(
-            chat_id,
-            "💳 پرداخت و تمدید اشتراک\n\n"
-            "سیستم پرداخت و تمدید اشتراک MIRA "
-            "در مرحله بعد راه‌اندازی می‌شه. 🔐\n\n"
-            "در این بخش وضعیت اشتراک، کد تأیید، "
-            "پرداخت و ارسال رسید مدیریت خواهد شد."
-        )
-
-        return True
-
-
-    # -----------------------------------------------------
-    # USER PANEL
-    # -----------------------------------------------------
-
-    if text == "👤 پنل من":
-
-        send(
-            chat_id,
-            "👤 پنل من\n\n"
-            "پنل شخصی MIRA در حال آماده‌سازی است. ✨\n\n"
-            "در نسخه نهایی می‌تونی وضعیت اشتراک، "
-            "دوره، مشاور، تاریخ شروع، تاریخ پایان "
-            "و تعداد روزهای باقی‌مانده رو ببینی."
-        )
-
-        return True
-
-
-    # -----------------------------------------------------
-    # SUPPORT
-    # -----------------------------------------------------
-
-    if text == "🆘 پشتیبانی":
-
-        send(
-            chat_id,
-            "🆘 پشتیبانی MIRA\n\n"
-            "اگر سوال یا مشکلی داری، "
-            "پیامت رو برای تیم MIRA ارسال کن.\n\n"
-            "سیستم پشتیبانی در مرحله بعد "
-            "به‌صورت کامل راه‌اندازی می‌شه. 🤝"
-        )
-
-        return True
-
-
-    return False
-
-
-# =========================================================
-# HANDLE MESSAGE
-# =========================================================
-
-def handle_message(msg):
-
-    chat_id = msg["chat"]["id"]
-
-    text = msg.get(
-        "text",
-        ""
-    ).strip()
-
-
-    # -----------------------------------------------------
-    # START
-    # -----------------------------------------------------
-
-    if text == "/start":
-
-        users.pop(
-            chat_id,
-            None
-        )
-
-        check_membership_and_continue(
-            chat_id
-        )
-
-        return
-
-
-    # -----------------------------------------------------
-    # CANCEL
-    # -----------------------------------------------------
-
-    if text == "/cancel":
-
-        users.pop(
-            chat_id,
-            None
-        )
-
-        send(
-            chat_id,
-            "فرآیند متوقف شد.\n\n"
-            "هر زمان خواستی دوباره /start رو بزن. 👋",
-            main_menu_keyboard()
-        )
-
-        return
-
-
-    # -----------------------------------------------------
-    # OLD START BUTTON
-    # -----------------------------------------------------
-
-    if text == "🚀 بزن بریم":
-
-        if not is_channel_member(chat_id):
-
-            send_membership_gate(
-                chat_id
-            )
-
-            return
-
-
-        users[chat_id] = new_user()
-
-        ask_question(
-            chat_id
-        )
-
-        return
-
-
-    # -----------------------------------------------------
-    # MAIN MENU
-    # -----------------------------------------------------
-
-    if handle_main_menu_action(
-        chat_id,
-        text
-    ):
-
-        return
-
-
-    # -----------------------------------------------------
-    # NO ACTIVE USER FLOW
-    # -----------------------------------------------------
-
-    if chat_id not in users:
-
-        if is_channel_member(chat_id):
-
-            send(
-                chat_id,
-                "از منوی زیر انتخاب کن 👇",
-                main_menu_keyboard()
-            )
-
-        else:
-
-            send_membership_gate(
-                chat_id
-            )
-
-        return
-
-
-    # -----------------------------------------------------
-    # CURRENT USER
-    # -----------------------------------------------------
-
-    user = users[chat_id]
-
-
-    # -----------------------------------------------------
-    # RESTART
-    # -----------------------------------------------------
-
-    if text == "🔄 شروع دوباره":
-
-        users[chat_id] = new_user()
-
-        send(
-            chat_id,
-            "حتماً. از اول شروع می‌کنیم. 🔄"
-        )
-
-        ask_question(
-            chat_id
-        )
-
-        return
-
-
-    # -----------------------------------------------------
-    # EDIT
-    # -----------------------------------------------------
-
-    if text == "✏️ اصلاح اطلاعات":
-
-        users[chat_id] = new_user()
-
-        send(
-            chat_id,
-            "حتماً. اطلاعات رو دوباره وارد می‌کنیم. ✏️"
-        )
-
-        ask_question(
-            chat_id
-        )
-
-        return
-
-
-    # -----------------------------------------------------
-    # CONFIRM
-    # -----------------------------------------------------
-
-    if text == "✅ تأیید و ارسال":
-
-        if not user.get("completed"):
-
-            ask_question(
-                chat_id
-            )
-
-            return
-
-
-        data = user["data"]
-
-        username = msg.get(
-            "from",
-            {}
-        ).get(
-            "username",
-            ""
-        )
-
-
-        try:
-
-            save_student(
-                chat_id,
-                username,
-                data
-            )
-
-        except Exception:
-
-            logging.exception(
-                "Database save failed"
-            )
-
-
-        report = build_admin_report(
-            chat_id,
-            msg,
-            data
-        )
-
-
-        sent_to_admin = False
-
-
-        for admin_id in ADMIN_CHAT_IDS:
-
-            try:
-
-                send(
-                    admin_id,
-                    report
-                )
-
-                sent_to_admin = True
-
-                logging.info(
-                    "Report sent to admin %s",
-                    admin_id
-                )
-
-            except Exception:
-
-                logging.exception(
-                    "Failed to send report to admin %s",
-                    admin_id
-                )
-
-
-        if sent_to_admin:
-
-            send(
-                chat_id,
-                "✅ اطلاعاتت با موفقیت ثبت شد.\n\n"
-                "گزارشت برای تیم MIRA ارسال شد و "
-                "ادمین MIRA باهات تماس خواهد گرفت. 📩\n\n"
-                "از اعتمادت ممنونیم رفیق. 🤍",
-                main_menu_keyboard()
-            )
-
-        else:
-
-            send(
-                chat_id,
-                "اطلاعاتت ثبت شد، اما در ارسال گزارش "
-                "مشکلی پیش آمد.\n"
-                "تیم MIRA در حال بررسی است. ⚠️",
-                main_menu_keyboard()
-            )
-
-
-        users.pop(
-            chat_id,
-            None
-        )
-
-        return
-
-
-    # -----------------------------------------------------
-    # QUESTION FLOW
-    # -----------------------------------------------------
-
-    step = user["step"]
-
-    if step >= len(QUESTIONS):
-
-        return
-
-
-    question = QUESTIONS[step]
-
-
-    # -----------------------------------------------------
-    # CONTACT
-    # -----------------------------------------------------
-
-    if question["type"] == "contact":
-
-        contact = msg.get(
-            "contact"
-        )
-
-
-        if not contact:
-
-            send(
-                chat_id,
-                "لطفاً با دکمه زیر شماره تماس "
-                "خودت رو ارسال کن. 📞",
-                contact_keyboard()
-            )
-
-            return
-
-
-        sender_id = msg.get(
-            "from",
-            {}
-        ).get(
-            "id"
-        )
-
-
-        contact_user_id = contact.get(
-            "user_id"
-        )
-
-
-        if (
-            contact_user_id is not None
-            and contact_user_id != sender_id
-        ):
-
-            send(
-                chat_id,
-                "لطفاً شماره تماس خودت "
-                "رو ارسال کن. 📞",
-                contact_keyboard()
-            )
-
-            return
-
-
-        phone = contact.get(
-            "phone_number",
-            ""
-        )
-
-
-        if not phone:
-
-            send(
-                chat_id,
-                "شماره تماس دریافت نشد. "
-                "دوباره امتحان کن. 📞",
-                contact_keyboard()
-            )
-
-            return
-
-
-        process_answer(
-            chat_id,
-            phone
-        )
-
-        return
-
-
-    # -----------------------------------------------------
-    # TEXT
-    # -----------------------------------------------------
-
-    if not text:
-
-        send(
-            chat_id,
-            "لطفاً پاسخ این سؤال رو وارد کن."
-        )
-
-        return
-
-
-    process_answer(
-        chat_id,
-        text
-    )
-
-
-# =========================================================
-# WEBHOOK
-# =========================================================
-
-WEBHOOK_PATH = "/telegram-webhook"
-
 
 class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
 
-        if self.path in [
-            "/",
-            "/health"
-        ]:
+        parsed = urlparse(self.path)
 
-            body = b"MIRA Bot is running"
-
-            self.send_response(
-                200
-            )
-
-            self.send_header(
-                "Content-Type",
-                "text/plain; charset=utf-8"
-            )
-
-            self.send_header(
-                "Content-Length",
-                str(len(body))
-            )
-
+        if parsed.path in ["/", "/health"]:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.end_headers()
 
             self.wfile.write(
-                body
+                b"MIRA Bot is running"
             )
 
             return
 
-
-        self.send_response(
-            404
-        )
-
+        self.send_response(404)
         self.end_headers()
-
 
     def do_POST(self):
 
-        if self.path != WEBHOOK_PATH:
+        parsed = urlparse(self.path)
 
-            self.send_response(
-                404
-            )
-
+        if parsed.path != WEBHOOK_PATH:
+            self.send_response(404)
             self.end_headers()
-
             return
-
 
         try:
 
             content_length = int(
-                self.headers.get(
-                    "Content-Length",
-                    "0"
-                )
+                self.headers.get("Content-Length", 0)
             )
 
-            body = self.rfile.read(
-                content_length
-            )
+            body = self.rfile.read(content_length)
 
             update = json.loads(
                 body.decode("utf-8")
             )
 
-
-            msg = update.get(
-                "message"
-            )
-
-            callback_query = update.get(
-                "callback_query"
-            )
-
-
-            if msg:
-
+            if "message" in update:
                 handle_message(
-                    msg
+                    update["message"]
                 )
 
-            elif callback_query:
-
-                handle_callback_query(
-                    callback_query
+            elif "callback_query" in update:
+                handle_callback(
+                    update["callback_query"]
                 )
 
-
-            self.send_response(
-                200
+            self.send_response(200)
+            self.send_header(
+                "Content-Type",
+                "application/json"
             )
-
             self.end_headers()
 
             self.wfile.write(
-                b"ok"
+                b'{"ok":true}'
             )
 
+        except Exception as e:
 
-        except Exception:
+            print("Webhook error:", e)
 
-            logging.exception(
-                "Webhook processing error"
-            )
-
-            self.send_response(
-                500
-            )
-
+            self.send_response(200)
             self.end_headers()
 
+            self.wfile.write(
+                b'{"ok":false}'
+            )
 
-    def log_message(
-        self,
-        format,
-        *args
-    ):
-
+    def log_message(self, format, *args):
         return
 
 
 # =========================================================
-# MAIN
+# START
 # =========================================================
 
 def main():
 
+    if not TOKEN:
+        print("ERROR: BOT_TOKEN is not set.")
+        return
+
     init_db()
 
-
     port = int(
-        os.getenv(
-            "PORT",
-            "10000"
-        )
+        os.getenv("PORT", "10000")
     )
 
-
-    server = ThreadingHTTPServer(
-        (
-            "0.0.0.0",
-            port
-        ),
+    server = HTTPServer(
+        ("0.0.0.0", port),
         Handler
     )
 
-
-    public_url = os.getenv(
+    external_url = os.getenv(
         "RENDER_EXTERNAL_URL",
         ""
-    ).strip().rstrip("/")
+    ).strip()
 
-
-    if public_url:
+    if external_url:
 
         webhook_url = (
-            public_url
+            external_url.rstrip("/")
             + WEBHOOK_PATH
         )
 
+        result = telegram(
+            "setWebhook",
+            {
+                "url": webhook_url,
+                "allowed_updates": [
+                    "message",
+                    "callback_query"
+                ]
+            }
+        )
 
-        try:
+        print("Webhook:", result)
 
-            result = telegram(
-                "setWebhook",
-                {
-                    "url": webhook_url,
-                    "allowed_updates": [
-                        "message",
-                        "callback_query"
-                    ]
-                }
-            )
-
-
-            logging.info(
-                "Webhook configured: %s",
-                result
-            )
-
-
-        except Exception:
-
-            logging.exception(
-                "Webhook configuration failed"
-            )
-
-
-    logging.info(
-        "MIRA Bot started on port %s",
-        port
+    print(
+        f"MIRA Bot running on port {port}"
     )
 
-
-    try:
-
-        server.serve_forever()
-
-    except KeyboardInterrupt:
-
-        pass
-
-    finally:
-
-        server.server_close()
+    server.serve_forever()
 
 
 if __name__ == "__main__":
-
     main()
