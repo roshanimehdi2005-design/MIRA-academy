@@ -38,23 +38,13 @@ if not TOKEN:
 
 
 # =========================================================
-# QUESTIONS
+# REGISTRATION QUESTIONS
 # =========================================================
 
 QUESTIONS = [
     {
         "key": "full_name",
         "question": "👤 نام و نام خانوادگی‌ات رو وارد کن:",
-        "type": "text"
-    },
-    {
-        "key": "phone",
-        "question": "📞 شماره تماست رو ارسال کن:",
-        "type": "contact"
-    },
-    {
-        "key": "age",
-        "question": "🎂 چند سالته؟",
         "type": "text"
     },
     {
@@ -75,23 +65,8 @@ QUESTIONS = [
         "type": "text"
     },
     {
-        "key": "school",
-        "question": "🏫 اسم مدرسه‌ات چیه؟",
-        "type": "text"
-    },
-    {
-        "key": "city",
-        "question": "📍 در چه شهری زندگی می‌کنی؟",
-        "type": "text"
-    },
-    {
-        "key": "gpa",
-        "question": "📊 معدل آخرین مقطع تحصیلی‌ات چند بوده؟",
-        "type": "text"
-    },
-    {
         "key": "goal",
-        "question": "🎯 هدف اصلیت از مشاوره یا آموزش چیه؟",
+        "question": "🎯 هدفت از مشاوره یا آموزش چیه؟",
         "type": "options",
         "options": [
             "موفقیت در مدرسه و امتحانات",
@@ -99,31 +74,6 @@ QUESTIONS = [
             "رسیدن به رتبه و دانشگاه خوب",
             "تقویت دروس و رفع ضعف‌ها",
             "هنوز دقیق نمی‌دونم"
-        ]
-    },
-    {
-        "key": "study_hours",
-        "question": "⏱️ میانگین ساعت مطالعه مفید روزانه‌ات چقدره؟",
-        "type": "options",
-        "options": [
-            "کمتر از ۲ ساعت",
-            "۲ تا ۴ ساعت",
-            "۴ تا ۶ ساعت",
-            "۶ تا ۸ ساعت",
-            "بیشتر از ۸ ساعت",
-            "دقیق نمی‌دونم"
-        ]
-    },
-    {
-        "key": "experience",
-        "question": "📚 تا حالا سابقه کلاس یا مشاوره داشتی؟",
-        "type": "options",
-        "options": [
-            "خیر، نداشتم",
-            "کلاس آموزشی داشتم",
-            "مشاوره داشتم",
-            "هم کلاس داشتم هم مشاوره",
-            "قبلاً داشتم ولی الان ندارم"
         ]
     },
     {
@@ -144,29 +94,28 @@ QUESTIONS = [
     {
         "key": "extra",
         "question": (
-            "📝 اگر توضیح یا نکته‌ای هست که فکر می‌کنی باید "
-            "درباره شرایطت بدونیم، اینجا بنویس.\n\n"
+            "📝 اگر توضیح یا نکته‌ای درباره شرایطت هست "
+            "که فکر می‌کنی باید بدونیم، اینجا بنویس.\n\n"
             "اگر موردی نداری، بنویس «ندارم»."
         ),
         "type": "text"
+    },
+    {
+        "key": "phone",
+        "question": "📞 برای اینکه ادمین MIRA بتونه باهات تماس بگیره، شماره تماست رو ارسال کن:",
+        "type": "contact"
     }
 ]
 
 
 LABELS = {
     "full_name": "نام و نام خانوادگی",
-    "phone": "شماره تماس",
-    "age": "سن",
     "grade": "پایه تحصیلی",
     "field": "رشته",
-    "school": "نام مدرسه",
-    "city": "شهر",
-    "gpa": "معدل آخرین مقطع",
     "goal": "هدف اصلی",
-    "study_hours": "میانگین ساعت مطالعه روزانه",
-    "experience": "سابقه کلاس یا مشاوره",
     "problem": "مهم‌ترین مشکل درسی",
-    "extra": "توضیحات تکمیلی"
+    "extra": "توضیحات تکمیلی",
+    "phone": "شماره تماس"
 }
 
 
@@ -393,7 +342,7 @@ def check_membership_and_continue(chat_id):
 
 
 # =========================================================
-# BASIC KEYBOARDS
+# KEYBOARDS
 # =========================================================
 
 def remove_keyboard():
@@ -447,7 +396,7 @@ def confirmation_keyboard():
             ],
             [
                 {
-                    "text": "✏️ اصلاح اطلاعات",
+                    "text": "✏️ اصلاح اطلاعات"
                 },
                 {
                     "text": "🔄 شروع دوباره"
@@ -479,6 +428,7 @@ def ask_question(chat_id):
     question_type = question["type"]
 
     if question_type == "contact":
+
         send(
             chat_id,
             question["question"],
@@ -486,6 +436,7 @@ def ask_question(chat_id):
         )
 
     elif question_type == "options":
+
         send(
             chat_id,
             question["question"],
@@ -493,6 +444,7 @@ def ask_question(chat_id):
         )
 
     else:
+
         send(
             chat_id,
             question["question"],
@@ -515,13 +467,16 @@ def process_answer(chat_id, answer):
     question = QUESTIONS[step]
 
     if question["type"] == "options":
+
         if answer not in question["options"]:
+
             send(
                 chat_id,
                 "لطفاً یکی از گزینه‌های نمایش‌داده‌شده "
                 "رو انتخاب کن. 👇",
                 option_keyboard(question["options"])
             )
+
             return
 
     user["data"][question["key"]] = answer
@@ -541,13 +496,16 @@ def process_answer(chat_id, answer):
 # =========================================================
 
 def build_summary(data):
+
     lines = [
         "📋 اطلاعات ثبت‌شده",
         ""
     ]
 
     for question in QUESTIONS:
+
         key = question["key"]
+
         value = data.get(
             key,
             "ثبت نشده"
@@ -561,6 +519,7 @@ def build_summary(data):
 
 
 def show_summary(chat_id):
+
     user = users.get(chat_id)
 
     if not user:
@@ -572,10 +531,10 @@ def show_summary(chat_id):
         "🔎 لطفاً اطلاعاتت رو بررسی کن:\n\n"
         + build_summary(user["data"])
         + "\n\n"
-        "اگر همه‌چیز درست است، "
-        "«تأیید و ارسال» را بزن. ✅\n"
-        "اگر نیاز به تغییر دارد، "
-        "«اصلاح اطلاعات» را بزن."
+        "اگر همه‌چیز درسته، "
+        "«تأیید و ارسال» رو بزن. ✅\n"
+        "اگر نیاز به تغییر داره، "
+        "«اصلاح اطلاعات» رو بزن."
     )
 
     send(
@@ -590,7 +549,11 @@ def show_summary(chat_id):
 # =========================================================
 
 def build_admin_report(chat_id, msg, data):
-    telegram_user = msg.get("from", {})
+
+    telegram_user = msg.get(
+        "from",
+        {}
+    )
 
     username = telegram_user.get(
         "username",
@@ -607,10 +570,13 @@ def build_admin_report(chat_id, msg, data):
     ]
 
     if username:
+
         lines.append(
             f"🔗 Username: @{username}"
         )
+
     else:
+
         lines.append(
             "🔗 Username: ندارد"
         )
@@ -627,6 +593,7 @@ def build_admin_report(chat_id, msg, data):
 # =========================================================
 
 def handle_callback_query(callback_query):
+
     callback_id = callback_query.get(
         "id"
     )
@@ -648,14 +615,18 @@ def handle_callback_query(callback_query):
     if data == "check_membership":
 
         if is_channel_member(chat_id):
+
             answer_callback(
                 callback_id,
                 "عضویتت تأیید شد ✅"
             )
 
-            send_main_menu(chat_id)
+            send_main_menu(
+                chat_id
+            )
 
         else:
+
             answer_callback(
                 callback_id,
                 "هنوز عضویتت تأیید نشده ❌"
@@ -672,18 +643,28 @@ def handle_callback_query(callback_query):
 
 
 # =========================================================
-# TEMPORARY MENU ACTIONS
+# MAIN MENU ACTIONS
 # =========================================================
 
 def handle_main_menu_action(chat_id, text):
 
+    # -----------------------------------------------------
+    # REGISTRATION
+    # -----------------------------------------------------
+
     if text == "📝 ثبت‌نام و درخواست مشاوره":
 
         if not is_channel_member(chat_id):
-            send_membership_gate(chat_id)
-            return
+
+            send_membership_gate(
+                chat_id
+            )
+
+            return True
+
 
         users[chat_id] = new_user()
+
 
         send(
             chat_id,
@@ -691,11 +672,21 @@ def handle_main_menu_action(chat_id, text):
             "برای اینکه تیم MIRA بتونه "
             "بهترین مسیر رو برات مشخص کنه، "
             "چند سؤال کوتاه ازت می‌پرسیم.\n\n"
-            "بزن بریم 🚀"
+            "در پایان، اطلاعاتت رو بررسی می‌کنی "
+            "و بعد برای تیم MIRA ارسال می‌شه. 🚀"
         )
 
-        ask_question(chat_id)
+
+        ask_question(
+            chat_id
+        )
+
         return True
+
+
+    # -----------------------------------------------------
+    # COURSES
+    # -----------------------------------------------------
 
     if text == "🎓 معرفی دوره‌ها":
 
@@ -703,12 +694,17 @@ def handle_main_menu_action(chat_id, text):
             chat_id,
             "🎓 معرفی دوره‌های MIRA\n\n"
             "این بخش در مرحله بعد کامل می‌شه.\n\n"
-            "قراره اینجا بتونی دوره‌های MIRA رو ببینی "
+            "اینجا قراره بتونی دوره‌های MIRA رو ببینی "
             "و برای اطلاعات کامل هر دوره وارد کانال "
             "اختصاصی همون دوره بشی. ✨"
         )
 
         return True
+
+
+    # -----------------------------------------------------
+    # PAYMENT
+    # -----------------------------------------------------
 
     if text == "💳 پرداخت و تمدید اشتراک":
 
@@ -723,6 +719,11 @@ def handle_main_menu_action(chat_id, text):
 
         return True
 
+
+    # -----------------------------------------------------
+    # USER PANEL
+    # -----------------------------------------------------
+
     if text == "👤 پنل من":
 
         send(
@@ -736,6 +737,11 @@ def handle_main_menu_action(chat_id, text):
 
         return True
 
+
+    # -----------------------------------------------------
+    # SUPPORT
+    # -----------------------------------------------------
+
     if text == "🆘 پشتیبانی":
 
         send(
@@ -748,6 +754,7 @@ def handle_main_menu_action(chat_id, text):
         )
 
         return True
+
 
     return False
 
@@ -806,35 +813,43 @@ def handle_message(msg):
 
 
     # -----------------------------------------------------
-    # MEMBERSHIP RECHECK
+    # OLD START BUTTON
     # -----------------------------------------------------
 
     if text == "🚀 بزن بریم":
 
         if not is_channel_member(chat_id):
-            send_membership_gate(chat_id)
+
+            send_membership_gate(
+                chat_id
+            )
+
             return
+
 
         users[chat_id] = new_user()
 
-        ask_question(chat_id)
+        ask_question(
+            chat_id
+        )
 
         return
 
 
     # -----------------------------------------------------
-    # MAIN MENU ACTIONS
+    # MAIN MENU
     # -----------------------------------------------------
 
     if handle_main_menu_action(
         chat_id,
         text
     ):
+
         return
 
 
     # -----------------------------------------------------
-    # USER DOES NOT HAVE ACTIVE FLOW
+    # NO ACTIVE USER FLOW
     # -----------------------------------------------------
 
     if chat_id not in users:
@@ -876,13 +891,15 @@ def handle_message(msg):
             "حتماً. از اول شروع می‌کنیم. 🔄"
         )
 
-        ask_question(chat_id)
+        ask_question(
+            chat_id
+        )
 
         return
 
 
     # -----------------------------------------------------
-    # EDIT INFORMATION
+    # EDIT
     # -----------------------------------------------------
 
     if text == "✏️ اصلاح اطلاعات":
@@ -894,7 +911,9 @@ def handle_message(msg):
             "حتماً. اطلاعات رو دوباره وارد می‌کنیم. ✏️"
         )
 
-        ask_question(chat_id)
+        ask_question(
+            chat_id
+        )
 
         return
 
@@ -907,9 +926,12 @@ def handle_message(msg):
 
         if not user.get("completed"):
 
-            ask_question(chat_id)
+            ask_question(
+                chat_id
+            )
 
             return
+
 
         data = user["data"]
 
@@ -920,6 +942,7 @@ def handle_message(msg):
             "username",
             ""
         )
+
 
         try:
 
@@ -941,6 +964,7 @@ def handle_message(msg):
             msg,
             data
         )
+
 
         sent_to_admin = False
 
@@ -974,7 +998,8 @@ def handle_message(msg):
             send(
                 chat_id,
                 "✅ اطلاعاتت با موفقیت ثبت شد.\n\n"
-                "گزارشت برای تیم MIRA ارسال شد. 📩\n\n"
+                "گزارشت برای تیم MIRA ارسال شد و "
+                "ادمین MIRA باهات تماس خواهد گرفت. 📩\n\n"
                 "از اعتمادت ممنونیم رفیق. 🤍",
                 main_menu_keyboard()
             )
@@ -1022,6 +1047,7 @@ def handle_message(msg):
             "contact"
         )
 
+
         if not contact:
 
             send(
@@ -1040,6 +1066,7 @@ def handle_message(msg):
         ).get(
             "id"
         )
+
 
         contact_user_id = contact.get(
             "user_id"
@@ -1088,7 +1115,7 @@ def handle_message(msg):
 
 
     # -----------------------------------------------------
-    # TEXT ANSWER
+    # TEXT
     # -----------------------------------------------------
 
     if not text:
@@ -1118,11 +1145,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
 
-        if self.path in ["/", "/health"]:
+        if self.path in [
+            "/",
+            "/health"
+        ]:
 
             body = b"MIRA Bot is running"
 
-            self.send_response(200)
+            self.send_response(
+                200
+            )
 
             self.send_header(
                 "Content-Type",
@@ -1136,12 +1168,17 @@ class Handler(BaseHTTPRequestHandler):
 
             self.end_headers()
 
-            self.wfile.write(body)
+            self.wfile.write(
+                body
+            )
 
             return
 
 
-        self.send_response(404)
+        self.send_response(
+            404
+        )
+
         self.end_headers()
 
 
@@ -1149,7 +1186,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path != WEBHOOK_PATH:
 
-            self.send_response(404)
+            self.send_response(
+                404
+            )
+
             self.end_headers()
 
             return
@@ -1184,8 +1224,9 @@ class Handler(BaseHTTPRequestHandler):
 
             if msg:
 
-                handle_message(msg)
-
+                handle_message(
+                    msg
+                )
 
             elif callback_query:
 
@@ -1194,9 +1235,15 @@ class Handler(BaseHTTPRequestHandler):
                 )
 
 
-            self.send_response(200)
+            self.send_response(
+                200
+            )
+
             self.end_headers()
-            self.wfile.write(b"ok")
+
+            self.wfile.write(
+                b"ok"
+            )
 
 
         except Exception:
@@ -1205,7 +1252,10 @@ class Handler(BaseHTTPRequestHandler):
                 "Webhook processing error"
             )
 
-            self.send_response(500)
+            self.send_response(
+                500
+            )
+
             self.end_headers()
 
 
@@ -1225,6 +1275,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
 
     init_db()
+
 
     port = int(
         os.getenv(
@@ -1269,6 +1320,7 @@ def main():
                     ]
                 }
             )
+
 
             logging.info(
                 "Webhook configured: %s",
