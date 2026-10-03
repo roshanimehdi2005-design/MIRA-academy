@@ -50,7 +50,7 @@ COURSES = {
 
 
 # =========================================================
-# IN-MEMORY USER STATES
+# IN-MEMORY STATES
 # =========================================================
 
 users = {}
@@ -127,10 +127,16 @@ def send_message(chat_id, text, reply_markup=None):
         "text": text
     }
 
-    if reply_markup:
+    if reply_markup is not None:
         payload["reply_markup"] = json.dumps(reply_markup)
 
     return tg("sendMessage", payload)
+
+
+def remove_keyboard():
+    return {
+        "remove_keyboard": True
+    }
 
 
 def answer_callback(callback_query_id):
@@ -217,6 +223,17 @@ def main_menu_keyboard():
     }
 
 
+def registration_keyboard():
+    return {
+        "keyboard": [
+            [
+                {"text": "❌ لغو ثبت‌نام"}
+            ]
+        ],
+        "resize_keyboard": True
+    }
+
+
 def payment_menu_keyboard():
     return {
         "keyboard": [
@@ -228,6 +245,17 @@ def payment_menu_keyboard():
             ],
             [
                 {"text": "🔙 بازگشت به منوی اصلی"}
+            ]
+        ],
+        "resize_keyboard": True
+    }
+
+
+def code_input_keyboard():
+    return {
+        "keyboard": [
+            [
+                {"text": "❌ لغو"}
             ]
         ],
         "resize_keyboard": True
@@ -254,8 +282,19 @@ def admin_menu_keyboard():
     }
 
 
+def admin_code_keyboard():
+    return {
+        "keyboard": [
+            [
+                {"text": "❌ لغو"}
+            ]
+        ],
+        "resize_keyboard": True
+    }
+
+
 # =========================================================
-# SEND MENUS
+# MENUS
 # =========================================================
 
 def send_membership_gate(chat_id):
@@ -335,10 +374,11 @@ def send_courses(chat_id):
 
 
 # =========================================================
-# REGISTRATION / LEAD FORM
+# REGISTRATION
 # =========================================================
 
 def start_registration(chat_id):
+
     users[chat_id] = {
         "mode": "registration",
         "step": "full_name",
@@ -348,11 +388,13 @@ def start_registration(chat_id):
     send_message(
         chat_id,
         "📝 ثبت‌نام و درخواست مشاوره\n\n"
-        "اول از همه، نام و نام خانوادگی‌ت رو برام بفرست:"
+        "اول از همه، نام و نام خانوادگی‌ت رو برام بفرست:",
+        registration_keyboard()
     )
 
 
 def process_registration(chat_id, text):
+
     state = users.get(chat_id)
 
     if not state:
@@ -365,68 +407,87 @@ def process_registration(chat_id, text):
     data = state.setdefault("data", {})
 
     if step == "full_name":
+
         data["full_name"] = text
         state["step"] = "grade"
 
         send_message(
             chat_id,
             "عالیه 👌\n\n"
-            "پایه تحصیلی‌ت رو بفرست:"
+            "پایه تحصیلی‌ت رو بفرست:",
+            registration_keyboard()
         )
+
         return True
 
     if step == "grade":
+
         data["grade"] = text
         state["step"] = "field"
 
         send_message(
             chat_id,
-            "رشته‌ت چیه؟"
+            "رشته‌ت چیه؟",
+            registration_keyboard()
         )
+
         return True
 
     if step == "field":
+
         data["field"] = text
         state["step"] = "goal"
 
         send_message(
             chat_id,
-            "🎯 هدف اصلیت از کنکور یا درس خوندن چیه؟"
+            "🎯 هدف اصلیت از کنکور یا درس خوندن چیه؟",
+            registration_keyboard()
         )
+
         return True
 
     if step == "goal":
+
         data["goal"] = text
         state["step"] = "problem"
 
         send_message(
             chat_id,
-            "بزرگ‌ترین مشکلت در مسیر درس خوندن چیه؟"
+            "بزرگ‌ترین مشکلت در مسیر درس خوندن چیه؟",
+            registration_keyboard()
         )
+
         return True
 
     if step == "problem":
+
         data["problem"] = text
         state["step"] = "notes"
 
         send_message(
             chat_id,
             "اگر نکته یا توضیح دیگه‌ای هست که دوست داری تیم MIRA بدونه، برام بنویس.\n\n"
-            "اگر چیزی نداری بنویس: ندارد"
+            "اگر چیزی نداری بنویس: ندارد",
+            registration_keyboard()
         )
+
         return True
 
     if step == "notes":
+
         data["notes"] = text
         state["step"] = "phone"
 
         send_message(
             chat_id,
-            "📱 در آخر شماره تماست رو بفرست:"
+            "📱 در آخر شماره تماست رو بفرست:",
+            registration_keyboard()
         )
+
         return True
 
     if step == "phone":
+
         data["phone"] = text
 
         conn = db()
@@ -452,7 +513,8 @@ def process_registration(chat_id, text):
         send_message(
             chat_id,
             "✅ اطلاعاتت با موفقیت ثبت شد.\n\n"
-            "ادمین MIRA باهات تماس خواهد گرفت."
+            "ادمین MIRA باهات تماس خواهد گرفت.",
+            remove_keyboard()
         )
 
         notify_admins_new_lead(chat_id, data)
@@ -465,6 +527,7 @@ def process_registration(chat_id, text):
 
 
 def notify_admins_new_lead(chat_id, data):
+
     text = (
         "📥 لید جدید MIRA\n\n"
         f"👤 نام: {data.get('full_name', '-')}\n"
@@ -486,6 +549,7 @@ def notify_admins_new_lead(chat_id, data):
 # =========================================================
 
 def start_payment_auth(chat_id):
+
     conn = db()
 
     cursor = conn.execute(
@@ -518,6 +582,7 @@ def start_payment_auth(chat_id):
 
 
 def notify_admins_payment_request(chat_id, request_id):
+
     text = (
         "🔐 درخواست احراز هویت پرداخت / تمدید\n\n"
         f"🆔 درخواست: #{request_id}\n"
@@ -537,6 +602,7 @@ def notify_admins_payment_request(chat_id, request_id):
     }
 
     for admin_id in ADMIN_CHAT_IDS:
+
         send_message(
             admin_id,
             text,
@@ -553,6 +619,7 @@ def normalize_code(code):
 
 
 def save_verification_code(chat_id, request_id, code):
+
     code = normalize_code(code)
 
     conn = db()
@@ -596,6 +663,7 @@ def save_verification_code(chat_id, request_id, code):
 
 
 def generate_code():
+
     return "MIRA-" + "".join(
         secrets.choice("0123456789")
         for _ in range(6)
@@ -603,6 +671,7 @@ def generate_code():
 
 
 def verify_code(chat_id, code):
+
     code = normalize_code(code)
 
     conn = db()
@@ -624,6 +693,7 @@ def verify_code(chat_id, code):
     ).fetchone()
 
     if not row:
+
         conn.close()
         return False
 
@@ -641,6 +711,7 @@ def verify_code(chat_id, code):
     )
 
     if row["request_id"]:
+
         conn.execute(
             """
             UPDATE mira_payment_requests
@@ -657,13 +728,15 @@ def verify_code(chat_id, code):
 
 
 def start_code_input(chat_id):
+
     users[chat_id] = {
         "mode": "enter_verification_code"
     }
 
     send_message(
         chat_id,
-        "🔐 کد تأییدت رو وارد کن:"
+        "🔐 کد تأییدت رو وارد کن:",
+        code_input_keyboard()
     )
 
 
@@ -676,6 +749,7 @@ def is_admin(chat_id):
 
 
 def send_admin_leads(chat_id):
+
     conn = db()
 
     rows = conn.execute(
@@ -690,21 +764,27 @@ def send_admin_leads(chat_id):
     conn.close()
 
     if not rows:
+
         send_message(
             chat_id,
             "📥 هنوز هیچ لیدی ثبت نشده."
         )
+
         return
 
     buttons = []
 
     for row in rows:
+
         try:
             data = json.loads(row["data_json"])
         except Exception:
             data = {}
 
-        name = data.get("full_name", "بدون نام")
+        name = data.get(
+            "full_name",
+            "بدون نام"
+        )
 
         buttons.append([
             {
@@ -731,6 +811,7 @@ def send_admin_leads(chat_id):
 
 
 def send_admin_lead_detail(chat_id, target_chat_id):
+
     conn = db()
 
     row = conn.execute(
@@ -745,10 +826,12 @@ def send_admin_lead_detail(chat_id, target_chat_id):
     conn.close()
 
     if not row:
+
         send_message(
             chat_id,
             "❌ این لید پیدا نشد."
         )
+
         return
 
     try:
@@ -792,6 +875,7 @@ def send_admin_lead_detail(chat_id, target_chat_id):
 
 
 def send_admin_payment_requests(chat_id):
+
     conn = db()
 
     rows = conn.execute(
@@ -806,10 +890,12 @@ def send_admin_payment_requests(chat_id):
     conn.close()
 
     if not rows:
+
         send_message(
             chat_id,
             "💳 هنوز هیچ درخواست پرداختی ثبت نشده."
         )
+
         return
 
     buttons = []
@@ -825,7 +911,11 @@ def send_admin_payment_requests(chat_id):
     }
 
     for row in rows:
-        icon = status_map.get(row["status"], "❔")
+
+        icon = status_map.get(
+            row["status"],
+            "❔"
+        )
 
         buttons.append([
             {
@@ -852,6 +942,7 @@ def send_admin_payment_requests(chat_id):
 
 
 def send_admin_payment_detail(chat_id, request_id):
+
     conn = db()
 
     row = conn.execute(
@@ -866,10 +957,12 @@ def send_admin_payment_detail(chat_id, request_id):
     conn.close()
 
     if not row:
+
         send_message(
             chat_id,
             "❌ درخواست پیدا نشد."
         )
+
         return
 
     status_map = {
@@ -898,11 +991,16 @@ def send_admin_payment_detail(chat_id, request_id):
 
     buttons = []
 
-    if row["status"] in ["PENDING", "REJECTED"]:
+    if row["status"] in [
+        "PENDING",
+        "REJECTED"
+    ]:
+
         buttons.append([
             {
                 "text": "🔐 صدور کد تأیید",
-                "callback_data": f"admin_issue_code_{request_id}_{row['chat_id']}"
+                "callback_data":
+                    f"admin_issue_code_{request_id}_{row['chat_id']}"
             }
         ])
 
@@ -929,7 +1027,12 @@ def send_admin_payment_detail(chat_id, request_id):
     )
 
 
-def start_admin_issue_code(admin_chat_id, request_id, target_chat_id):
+def start_admin_issue_code(
+    admin_chat_id,
+    request_id,
+    target_chat_id
+):
+
     users[admin_chat_id] = {
         "mode": "admin_issue_code",
         "request_id": request_id,
@@ -941,11 +1044,16 @@ def start_admin_issue_code(admin_chat_id, request_id, target_chat_id):
         "🔐 صدور کد تأیید\n\n"
         "کدی که می‌خواهی برای این دانش‌آموز صادر بشه رو وارد کن.\n\n"
         "یا برای تولید خودکار یک کد امن، بنویس:\n"
-        "«خودکار»"
+        "«خودکار»",
+        admin_code_keyboard()
     )
 
 
-def process_admin_issue_code(admin_chat_id, text):
+def process_admin_issue_code(
+    admin_chat_id,
+    text
+):
+
     state = users.get(admin_chat_id)
 
     if not state:
@@ -954,20 +1062,34 @@ def process_admin_issue_code(admin_chat_id, text):
     if state.get("mode") != "admin_issue_code":
         return False
 
+    if text == "❌ لغو":
+
+        users.pop(admin_chat_id, None)
+
+        send_admin_menu(admin_chat_id)
+
+        return True
+
     request_id = state["request_id"]
     target_chat_id = state["target_chat_id"]
 
     if text.strip() == "خودکار":
+
         code = generate_code()
+
     else:
+
         code = normalize_code(text)
 
         if len(code) < 4:
+
             send_message(
                 admin_chat_id,
                 "❌ کد خیلی کوتاهه.\n\n"
-                "حداقل ۴ کاراکتر وارد کن."
+                "حداقل ۴ کاراکتر وارد کن.",
+                admin_code_keyboard()
             )
+
             return True
 
     save_verification_code(
@@ -997,7 +1119,8 @@ def process_admin_issue_code(admin_chat_id, text):
                 [
                     {
                         "text": "💳 مشاهده درخواست",
-                        "callback_data": f"admin_payment_{request_id}"
+                        "callback_data":
+                            f"admin_payment_{request_id}"
                     }
                 ],
                 [
@@ -1014,6 +1137,7 @@ def process_admin_issue_code(admin_chat_id, text):
 
 
 def send_admin_codes(chat_id):
+
     conn = db()
 
     rows = conn.execute(
@@ -1028,10 +1152,12 @@ def send_admin_codes(chat_id):
     conn.close()
 
     if not rows:
+
         send_message(
             chat_id,
             "🔐 هنوز هیچ کد تأییدی صادر نشده."
         )
+
         return
 
     lines = [
@@ -1039,6 +1165,7 @@ def send_admin_codes(chat_id):
     ]
 
     for row in rows:
+
         lines.append(
             f"#{row['id']} | "
             f"درخواست #{row['request_id'] or '-'} | "
@@ -1067,6 +1194,7 @@ def send_admin_codes(chat_id):
 # =========================================================
 
 def send_user_panel(chat_id):
+
     conn = db()
 
     student = conn.execute(
@@ -1094,8 +1222,11 @@ def send_user_panel(chat_id):
     text = "👤 پنل من\n\n"
 
     if student:
+
         try:
-            data = json.loads(student["data_json"])
+            data = json.loads(
+                student["data_json"]
+            )
         except Exception:
             data = {}
 
@@ -1104,16 +1235,25 @@ def send_user_panel(chat_id):
             f"🎓 پایه: {data.get('grade', '-')}\n"
             f"📚 رشته: {data.get('field', '-')}\n\n"
         )
+
     else:
-        text += "اطلاعات ثبت‌نامی هنوز ثبت نشده.\n\n"
+
+        text += (
+            "اطلاعات ثبت‌نامی هنوز ثبت نشده.\n\n"
+        )
 
     if payment:
+
         text += (
             f"💳 آخرین درخواست پرداخت: #{payment['id']}\n"
             f"📌 وضعیت: {payment['status']}\n"
         )
+
     else:
-        text += "💳 هنوز درخواست پرداختی ثبت نکردی.\n"
+
+        text += (
+            "💳 هنوز درخواست پرداختی ثبت نکردی.\n"
+        )
 
     send_message(
         chat_id,
@@ -1142,11 +1282,20 @@ def send_user_panel(chat_id):
 # =========================================================
 
 def send_support(chat_id):
+
     send_message(
         chat_id,
         "🆘 پشتیبانی MIRA\n\n"
         "برای ارتباط با تیم MIRA پیام خودت رو همین‌جا ارسال کن.\n\n"
-        "پیامت برای تیم پشتیبانی ارسال خواهد شد."
+        "پیامت برای تیم پشتیبانی ارسال خواهد شد.",
+        {
+            "keyboard": [
+                [
+                    {"text": "🔙 بازگشت به منوی اصلی"}
+                ]
+            ],
+            "resize_keyboard": True
+        }
     )
 
 
@@ -1160,24 +1309,36 @@ def handle_admin_callback(chat_id, data):
         return False
 
     if data == "admin_menu":
+
         send_admin_menu(chat_id)
+
         return True
 
     if data == "admin_leads":
+
         send_admin_leads(chat_id)
+
         return True
 
     if data == "admin_payments":
+
         send_admin_payment_requests(chat_id)
+
         return True
 
     if data == "admin_codes":
+
         send_admin_codes(chat_id)
+
         return True
 
     if data.startswith("admin_lead_"):
+
         target_chat_id = int(
-            data.replace("admin_lead_", "")
+            data.replace(
+                "admin_lead_",
+                ""
+            )
         )
 
         send_admin_lead_detail(
@@ -1188,8 +1349,12 @@ def handle_admin_callback(chat_id, data):
         return True
 
     if data.startswith("admin_payment_"):
+
         request_id = int(
-            data.replace("admin_payment_", "")
+            data.replace(
+                "admin_payment_",
+                ""
+            )
         )
 
         send_admin_payment_detail(
@@ -1200,6 +1365,7 @@ def handle_admin_callback(chat_id, data):
         return True
 
     if data.startswith("admin_issue_code_"):
+
         parts = data.split("_")
 
         request_id = int(parts[3])
@@ -1221,21 +1387,34 @@ def handle_admin_callback(chat_id, data):
 # =========================================================
 
 def handle_callback(callback_query):
+
     callback_id = callback_query.get("id")
-    chat_id = callback_query["message"]["chat"]["id"]
-    data = callback_query.get("data", "")
+
+    chat_id = callback_query[
+        "message"
+    ]["chat"]["id"]
+
+    data = callback_query.get(
+        "data",
+        ""
+    )
 
     answer_callback(callback_id)
 
-    # Admin callbacks
+    # ADMIN
     if is_admin(chat_id):
-        if handle_admin_callback(chat_id, data):
+
+        if handle_admin_callback(
+            chat_id,
+            data
+        ):
             return
 
-    # Membership
+    # MEMBERSHIP
     if data == "check_membership":
 
         if is_channel_member(chat_id):
+
             send_message(
                 chat_id,
                 "✅ عضویتت تأیید شد.\n\n"
@@ -1245,6 +1424,7 @@ def handle_callback(callback_query):
             send_main_menu(chat_id)
 
         else:
+
             send_message(
                 chat_id,
                 "❌ هنوز عضویتت در کانال MIRA تأیید نشده.\n\n"
@@ -1254,14 +1434,22 @@ def handle_callback(callback_query):
 
         return
 
-    # Back to main
+    # MAIN
     if data == "back_to_main":
+
+        users.pop(chat_id, None)
+
         send_main_menu(chat_id)
+
         return
 
-    # Payment menu from user panel
+    # PAYMENT
     if data == "payment_menu":
+
+        users.pop(chat_id, None)
+
         send_payment_menu(chat_id)
+
         return
 
 
@@ -1273,81 +1461,146 @@ def handle_message(message):
 
     chat_id = message["chat"]["id"]
 
-    text = message.get("text", "").strip()
+    text = message.get(
+        "text",
+        ""
+    ).strip()
 
     if not text:
         return
 
-    # -----------------------------------------------------
+    # =====================================================
     # ADMIN
-    # -----------------------------------------------------
+    # =====================================================
 
     if is_admin(chat_id):
 
-        # Admin issue-code flow has priority
-        if process_admin_issue_code(chat_id, text):
+        if process_admin_issue_code(
+            chat_id,
+            text
+        ):
             return
 
         if text == "/start":
+
             send_admin_menu(chat_id)
+
             return
 
         if text == "📥 لیدها":
+
             send_admin_leads(chat_id)
+
             return
 
         if text == "💳 درخواست‌های پرداخت":
+
             send_admin_payment_requests(chat_id)
+
             return
 
         if text == "🔐 کدهای تأیید":
+
             send_admin_codes(chat_id)
+
             return
 
         if text == "👨‍🎓 پنل دانش‌آموز":
+
+            users.pop(chat_id, None)
+
             send_main_menu(chat_id)
+
             return
 
         if text == "🛠 پنل مدیریت":
+
             send_admin_menu(chat_id)
+
             return
 
-    # -----------------------------------------------------
-    # /start
-    # -----------------------------------------------------
+    # =====================================================
+    # CANCEL
+    # =====================================================
+
+    if text == "❌ لغو ثبت‌نام":
+
+        users.pop(chat_id, None)
+
+        send_message(
+            chat_id,
+            "❌ ثبت‌نام لغو شد.",
+            remove_keyboard()
+        )
+
+        send_main_menu(chat_id)
+
+        return
+
+    if text == "❌ لغو":
+
+        users.pop(chat_id, None)
+
+        send_message(
+            chat_id,
+            "❌ عملیات لغو شد.",
+            remove_keyboard()
+        )
+
+        send_main_menu(chat_id)
+
+        return
+
+    # =====================================================
+    # START
+    # =====================================================
 
     if text == "/start":
 
         if not is_channel_member(chat_id):
+
             send_membership_gate(chat_id)
+
             return
 
         send_main_menu(chat_id)
+
         return
 
-    # -----------------------------------------------------
-    # REGISTRATION FLOW
-    # -----------------------------------------------------
+    # =====================================================
+    # REGISTRATION
+    # =====================================================
 
-    if process_registration(chat_id, text):
+    if process_registration(
+        chat_id,
+        text
+    ):
         return
 
-    # -----------------------------------------------------
+    # =====================================================
     # USER CODE INPUT
-    # -----------------------------------------------------
+    # =====================================================
 
     state = users.get(chat_id)
 
-    if state and state.get("mode") == "enter_verification_code":
+    if (
+        state
+        and state.get("mode")
+        == "enter_verification_code"
+    ):
 
-        if verify_code(chat_id, text):
+        if verify_code(
+            chat_id,
+            text
+        ):
 
             users.pop(chat_id, None)
 
             send_message(
                 chat_id,
                 "✅ کد تأیید با موفقیت تأیید شد.\n\n"
-                "حالا می‌تونی فرایند پرداخت رو ادامه بدی."
+                "حالا می‌تونی فرایند پرداخت رو ادامه بدی.",
+                remove_keyboard()
             )
 
             send_payment_menu(chat_id)
@@ -1357,62 +1610,83 @@ def handle_message(message):
             send_message(
                 chat_id,
                 "❌ این کد معتبر نیست یا قبلاً استفاده شده.\n\n"
-                "کد رو دوباره بررسی کن."
+                "کد رو دوباره بررسی کن.",
+                code_input_keyboard()
             )
 
         return
 
-    # -----------------------------------------------------
-    # MEMBERSHIP CHECK
-    # -----------------------------------------------------
+    # =====================================================
+    # MEMBERSHIP
+    # =====================================================
 
     if not is_channel_member(chat_id):
+
         send_membership_gate(chat_id)
+
         return
 
-    # -----------------------------------------------------
+    # =====================================================
     # MAIN MENU
-    # -----------------------------------------------------
+    # =====================================================
 
     if text == "📝 ثبت‌نام و درخواست مشاوره":
+
         start_registration(chat_id)
+
         return
 
     if text == "🎓 معرفی دوره‌ها":
+
         send_courses(chat_id)
+
         return
 
     if text == "💳 پرداخت و تمدید اشتراک":
+
         send_payment_menu(chat_id)
+
         return
 
     if text == "👤 پنل من":
+
         send_user_panel(chat_id)
+
         return
 
     if text == "🆘 پشتیبانی":
+
         send_support(chat_id)
+
         return
 
-    # -----------------------------------------------------
-    # PAYMENT MENU
-    # -----------------------------------------------------
+    # =====================================================
+    # PAYMENT
+    # =====================================================
 
     if text == "📱 ثبت درخواست احراز هویت":
+
         start_payment_auth(chat_id)
+
         return
 
     if text == "🔐 ورود کد تأیید":
+
         start_code_input(chat_id)
+
         return
 
     if text == "🔙 بازگشت به منوی اصلی":
+
+        users.pop(chat_id, None)
+
         send_main_menu(chat_id)
+
         return
 
-    # -----------------------------------------------------
+    # =====================================================
     # FALLBACK
-    # -----------------------------------------------------
+    # =====================================================
 
     send_message(
         chat_id,
@@ -1422,49 +1696,83 @@ def handle_message(message):
 
 
 # =========================================================
-# WEBHOOK HANDLER
+# WEBHOOK
 # =========================================================
 
-class TelegramWebhookHandler(BaseHTTPRequestHandler):
+class TelegramWebhookHandler(
+    BaseHTTPRequestHandler
+):
 
     def do_POST(self):
 
-        parsed = urlparse(self.path)
+        parsed = urlparse(
+            self.path
+        )
 
         if parsed.path != WEBHOOK_PATH:
+
             self.send_response(404)
             self.end_headers()
+
             return
 
         content_length = int(
-            self.headers.get("Content-Length", 0)
+            self.headers.get(
+                "Content-Length",
+                0
+            )
         )
 
-        body = self.rfile.read(content_length)
+        body = self.rfile.read(
+            content_length
+        )
 
         try:
-            update = json.loads(body.decode("utf-8"))
+
+            update = json.loads(
+                body.decode("utf-8")
+            )
 
             if "message" in update:
-                handle_message(update["message"])
+
+                handle_message(
+                    update["message"]
+                )
 
             elif "callback_query" in update:
-                handle_callback(update["callback_query"])
+
+                handle_callback(
+                    update["callback_query"]
+                )
 
         except Exception as e:
-            print("Webhook error:", e)
+
+            print(
+                "Webhook error:",
+                e
+            )
 
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"OK")
+
+        self.wfile.write(
+            b"OK"
+        )
 
     def do_GET(self):
 
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"MIRA BOT is running.")
 
-    def log_message(self, format, *args):
+        self.wfile.write(
+            b"MIRA BOT is running."
+        )
+
+    def log_message(
+        self,
+        format,
+        *args
+    ):
         return
 
 
@@ -1477,15 +1785,24 @@ def main():
     init_db()
 
     port = int(
-        os.getenv("PORT", "10000")
+        os.getenv(
+            "PORT",
+            "10000"
+        )
     )
 
     server = HTTPServer(
-        ("0.0.0.0", port),
+        (
+            "0.0.0.0",
+            port
+        ),
         TelegramWebhookHandler
     )
 
-    print("MIRA bot running on port", port)
+    print(
+        "MIRA bot running on port",
+        port
+    )
 
     server.serve_forever()
 
