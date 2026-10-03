@@ -108,17 +108,6 @@ QUESTIONS = [
 ]
 
 
-LABELS = {
-    "full_name": "نام و نام خانوادگی",
-    "grade": "پایه",
-    "field": "رشته",
-    "goal": "هدف اصلی",
-    "problem": "بزرگ‌ترین مشکل",
-    "extra": "توضیحات بیشتر",
-    "phone": "شماره تماس"
-}
-
-
 # =========================================================
 # IN-MEMORY USER STATES
 # =========================================================
@@ -146,7 +135,7 @@ def init_db():
     conn = get_db()
     cur = conn.cursor()
 
-    # Existing students table
+    # Students
     cur.execute("""
         CREATE TABLE IF NOT EXISTS mira_students (
             chat_id INTEGER PRIMARY KEY,
@@ -165,6 +154,19 @@ def init_db():
             phone TEXT,
             status TEXT DEFAULT 'PENDING',
             created_at TEXT
+        )
+    """)
+
+    # Verification codes
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS mira_payment_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL,
+            request_id INTEGER,
+            code TEXT NOT NULL,
+            status TEXT DEFAULT 'ACTIVE',
+            created_at TEXT,
+            used_at TEXT
         )
     """)
 
@@ -212,6 +214,91 @@ def save_payment_request(chat_id, username, phone):
     conn.close()
 
     return request_id
+
+
+def save_verification_code(chat_id, request_id, code):
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Any previous active code for this user becomes inactive
+    cur.execute("""
+        UPDATE mira_payment_codes
+        SET status = 'REPLACED'
+        WHERE chat_id = ?
+        AND status = 'ACTIVE'
+    """, (chat_id,))
+
+    cur.execute("""
+        INSERT INTO mira_payment_codes
+        (chat_id, request_id, code, status, created_at)
+        VALUES (?, ?, ?, 'ACTIVE', ?)
+    """, (
+        chat_id,
+        request_id,
+        code,
+        datetime.now(timezone.utc).isoformat()
+    ))
+
+    code_id = cur.lastrowid
+
+    conn.commit()
+    conn.close()
+
+    return code_id
+
+
+def verify_code(chat_id, code):
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, request_id
+        FROM mira_payment_codes
+        WHERE chat_id = ?
+        AND code = ?
+        AND status = 'ACTIVE'
+        ORDER BY id DESC
+        LIMIT 1
+    """, (
+        chat_id,
+        code
+    ))
+
+    row = cur.fetchone()
+
+    if not row:
+        conn.close()
+        return None
+
+    code_id, request_id = row
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    cur.execute("""
+        UPDATE mira_payment_codes
+        SET status = 'USED',
+            used_at = ?
+        WHERE id = ?
+    """, (
+        now,
+        code_id
+    ))
+
+    # Mark related payment request as approved
+    if request_id:
+        cur.execute("""
+            UPDATE mira_payment_requests
+            SET status = 'CODE_APPROVED'
+            WHERE id = ?
+        """, (request_id,))
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "code_id": code_id,
+        "request_id": request_id
+    }
 
 
 # =========================================================
@@ -496,8 +583,19 @@ def finish_registration(chat_id):
 
 
 # =========================================================
-# PAYMENT / RENEWAL — STAGE 4
+# PAYMENT / RENEWAL
 # =========================================================
+
+def payment_menu_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "🔐 ورود کد تأیید"}],
+            [{"text": "📱 ثبت درخواست احراز هویت"}],
+            [{"text": "🔙 بازگشت به منوی اصلی"}]
+        ],
+        "resize_keyboard": True
+    }
+
 
 def payment_start_keyboard():
     return {
@@ -517,6 +615,18 @@ def payment_start_keyboard():
         "resize_keyboard": True,
         "one_time_keyboard": True
     }
+
+
+def send_payment_menu(chat_id):
+    send(
+        chat_id,
+        "💳 پرداخت و تمدید اشتراک MIRA\n\n"
+        "اشتراک‌های MIRA به‌صورت **۹۰ روزه** ارائه می‌شن.\n\n"
+        "اگر قبلاً از ادمین یا مشاورت کد تأیید گرفتی، "
+        "می‌تونی واردش کنی.\n\n"
+        "اگر هنوز کد نداری، ابتدا درخواست احراز هویت ثبت کن. 👇",
+        payment_menu_keyboard()
+    )
 
 
 def start_payment_request(chat_id):
@@ -543,19 +653,23 @@ def handle_payment_phone(chat_id, username, phone):
         phone=phone
     )
 
-    admin_message = (
-        "🔐 درخواست احراز هویت پرداخت / تمدید\n\n"
-        f"🆔 درخواست: #{request_id}\n"
-        f"👤 Username: @{username}" if username else
-        f"🔐 درخواست احراز هویت پرداخت / تمدید\n\n"
-        f"🆔 درخواست: #{request_id}"
-    )
-
-    admin_message += (
-        f"\n📱 شماره تماس: {phone}"
-        f"\n🆔 Chat ID: {chat_id}"
-        f"\n⏳ وضعیت: در انتظار بررسی"
-    )
+    if username:
+        admin_message = (
+            "🔐 درخواست احراز هویت پرداخت / تمدید\n\n"
+            f"🆔 درخواست: #{request_id}\n"
+            f"👤 Username: @{username}\n"
+            f"📱 شماره تماس: {phone}\n"
+            f"🆔 Chat ID: {chat_id}\n"
+            f"⏳ وضعیت: در انتظار بررسی"
+        )
+    else:
+        admin_message = (
+            "🔐 درخواست احراز هویت پرداخت / تمدید\n\n"
+            f"🆔 درخواست: #{request_id}\n"
+            f"📱 شماره تماس: {phone}\n"
+            f"🆔 Chat ID: {chat_id}\n"
+            f"⏳ وضعیت: در انتظار بررسی"
+        )
 
     for admin_id in ADMIN_CHAT_IDS:
         send(admin_id, admin_message)
@@ -565,7 +679,8 @@ def handle_payment_phone(chat_id, username, phone):
         "✅ درخواستت با موفقیت ثبت شد.\n\n"
         "اطلاعاتت برای تیم MIRA ارسال شد و بعد از بررسی، "
         "کد تأییدت رو از ادمین یا مشاورت دریافت می‌کنی. 🔐\n\n"
-        "بعد از دریافت کد، در مرحله بعد می‌تونی اون رو داخل بات وارد کنی. 🤍",
+        "بعد از دریافت کد، از بخش «💳 پرداخت و تمدید اشتراک» "
+        "می‌تونی کد رو وارد کنی. 🤍",
         main_menu_keyboard()
     )
 
@@ -573,7 +688,155 @@ def handle_payment_phone(chat_id, username, phone):
 
 
 # =========================================================
-# PLACEHOLDER USER PANEL
+# CODE INPUT
+# =========================================================
+
+def start_code_input(chat_id):
+    users[chat_id] = new_user()
+    users[chat_id]["mode"] = "verification_code"
+
+    send(
+        chat_id,
+        "🔐 ورود کد تأیید\n\n"
+        "کدی که از ادمین یا مشاورت دریافت کردی رو همینجا وارد کن:",
+    )
+
+
+def handle_verification_code(chat_id, code):
+    code = code.strip()
+
+    if not code:
+        send(
+            chat_id,
+            "❌ لطفاً کد تأیید رو وارد کن."
+        )
+        return
+
+    result = verify_code(chat_id, code)
+
+    if not result:
+        send(
+            chat_id,
+            "❌ کد تأیید نامعتبره یا قبلاً استفاده شده.\n\n"
+            "اگر مطمئنی کد درست رو وارد کردی، "
+            "با ادمین یا مشاورت هماهنگ کن.",
+            payment_menu_keyboard()
+        )
+        users.pop(chat_id, None)
+        return
+
+    send(
+        chat_id,
+        "✅ کد تأیید شد.\n\n"
+        "احراز هویتت توسط تیم MIRA تأیید شد. 🔐\n\n"
+        "در مرحله بعد اطلاعات پرداخت در اختیارت قرار می‌گیره.\n\n"
+        "فعلاً این مرحله تکمیل شده؛ از اعتمادت ممنونیم رفیق 🤍",
+        main_menu_keyboard()
+    )
+
+    for admin_id in ADMIN_CHAT_IDS:
+        send(
+            admin_id,
+            "✅ کد تأیید توسط کاربر استفاده شد.\n\n"
+            f"🆔 Chat ID: {chat_id}\n"
+            f"🆔 Request ID: #{result['request_id']}\n"
+            f"🔑 Code ID: #{result['code_id']}"
+        )
+
+    users.pop(chat_id, None)
+
+
+# =========================================================
+# ADMIN COMMAND — ISSUE CODE
+# =========================================================
+
+def issue_code(command_text, admin_chat_id):
+    if admin_chat_id not in ADMIN_CHAT_IDS:
+        return
+
+    parts = command_text.strip().split()
+
+    if len(parts) != 3:
+        send(
+            admin_chat_id,
+            "فرمت صحیح:\n\n"
+            "/issuecode CHAT_ID CODE\n\n"
+            "مثال:\n"
+            "/issuecode 123456789 MIRA7392"
+        )
+        return
+
+    try:
+        target_chat_id = int(parts[1])
+    except ValueError:
+        send(
+            admin_chat_id,
+            "❌ Chat ID باید عددی باشه."
+        )
+        return
+
+    code = parts[2].strip()
+
+    if not code:
+        send(
+            admin_chat_id,
+            "❌ کد نمی‌تونه خالی باشه."
+        )
+        return
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id
+        FROM mira_payment_requests
+        WHERE chat_id = ?
+        AND status = 'PENDING'
+        ORDER BY id DESC
+        LIMIT 1
+    """, (target_chat_id,))
+
+    row = cur.fetchone()
+
+    conn.close()
+
+    if not row:
+        send(
+            admin_chat_id,
+            "⚠️ برای این Chat ID درخواست پرداخت/تمدید در وضعیت «در انتظار بررسی» پیدا نشد."
+        )
+        return
+
+    request_id = row[0]
+
+    code_id = save_verification_code(
+        target_chat_id,
+        request_id,
+        code
+    )
+
+    send(
+        target_chat_id,
+        "🔐 کد تأیید MIRA\n\n"
+        f"کد تأیید شما:\n\n"
+        f"`{code}`\n\n"
+        "برای ادامه، وارد بخش «💳 پرداخت و تمدید اشتراک» شو "
+        "و گزینه «🔐 ورود کد تأیید» رو انتخاب کن.",
+        main_menu_keyboard()
+    )
+
+    send(
+        admin_chat_id,
+        "✅ کد تأیید با موفقیت صادر شد.\n\n"
+        f"👤 Chat ID: {target_chat_id}\n"
+        f"🆔 Request ID: #{request_id}\n"
+        f"🔑 Code ID: #{code_id}\n"
+        f"🔐 Code: {code}"
+    )
+
+
+# =========================================================
+# USER PANEL
 # =========================================================
 
 def send_user_panel(chat_id):
@@ -614,10 +877,16 @@ def handle_message(message):
         return
 
     username = chat.get("username", "")
-
     text = message.get("text", "")
-
     contact = message.get("contact")
+
+    # -----------------------------------------------------
+    # ADMIN COMMANDS
+    # -----------------------------------------------------
+
+    if text.startswith("/issuecode"):
+        issue_code(text, chat_id)
+        return
 
     # -----------------------------------------------------
     # /start
@@ -727,6 +996,26 @@ def handle_message(message):
             )
             return
 
+        # ---------------------------------------------
+        # Verification code
+        # ---------------------------------------------
+
+        if mode == "verification_code":
+
+            if text in [
+                "🔙 بازگشت به منوی اصلی",
+                "💳 پرداخت و تمدید اشتراک"
+            ]:
+                users.pop(chat_id, None)
+                send_payment_menu(chat_id)
+                return
+
+            handle_verification_code(
+                chat_id,
+                text
+            )
+            return
+
     # -----------------------------------------------------
     # Main menu
     # -----------------------------------------------------
@@ -743,7 +1032,7 @@ def handle_message(message):
 
     if text == "💳 پرداخت و تمدید اشتراک":
 
-        start_payment_request(chat_id)
+        send_payment_menu(chat_id)
         return
 
     if text == "👤 پنل من":
@@ -754,6 +1043,29 @@ def handle_message(message):
     if text == "🆘 پشتیبانی":
 
         send_support(chat_id)
+        return
+
+    # -----------------------------------------------------
+    # Payment menu
+    # -----------------------------------------------------
+
+    if text == "🔐 ورود کد تأیید":
+
+        start_code_input(chat_id)
+        return
+
+    if text == "📱 ثبت درخواست احراز هویت":
+
+        start_payment_request(chat_id)
+        return
+
+    # -----------------------------------------------------
+    # Back to main
+    # -----------------------------------------------------
+
+    if text == "🔙 بازگشت به منوی اصلی":
+
+        send_main_menu(chat_id)
         return
 
     # -----------------------------------------------------
@@ -773,7 +1085,6 @@ def handle_message(message):
 
 def handle_callback(callback_query):
     callback_id = callback_query.get("id")
-
     data = callback_query.get("data")
 
     message = callback_query.get("message", {})
@@ -836,7 +1147,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path in ["/", "/health"]:
             self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header(
+                "Content-Type",
+                "text/plain; charset=utf-8"
+            )
             self.end_headers()
 
             self.wfile.write(
@@ -860,21 +1174,28 @@ class Handler(BaseHTTPRequestHandler):
         try:
 
             content_length = int(
-                self.headers.get("Content-Length", 0)
+                self.headers.get(
+                    "Content-Length",
+                    0
+                )
             )
 
-            body = self.rfile.read(content_length)
+            body = self.rfile.read(
+                content_length
+            )
 
             update = json.loads(
                 body.decode("utf-8")
             )
 
             if "message" in update:
+
                 handle_message(
                     update["message"]
                 )
 
             elif "callback_query" in update:
+
                 handle_callback(
                     update["callback_query"]
                 )
@@ -918,7 +1239,10 @@ def main():
     init_db()
 
     port = int(
-        os.getenv("PORT", "10000")
+        os.getenv(
+            "PORT",
+            "10000"
+        )
     )
 
     server = HTTPServer(
@@ -949,7 +1273,10 @@ def main():
             }
         )
 
-        print("Webhook:", result)
+        print(
+            "Webhook:",
+            result
+        )
 
     print(
         f"MIRA Bot running on port {port}"
