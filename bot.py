@@ -22,6 +22,10 @@ DB_PATH = os.getenv("DB_PATH", "mira.db")
 
 API = f"https://api.telegram.org/bot{TOKEN}"
 
+# کانال اصلی MIRA
+CHANNEL_USERNAME = "@miracampus"
+CHANNEL_URL = "https://t.me/miracampus"
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
@@ -176,6 +180,106 @@ def new_user():
 
 
 # =========================================================
+# MEMBERSHIP GATE
+# =========================================================
+
+def is_channel_member(chat_id):
+
+    try:
+
+        result = telegram(
+            "getChatMember",
+            {
+                "chat_id": CHANNEL_USERNAME,
+                "user_id": chat_id
+            }
+        )
+
+        member = result.get("result", {})
+        status = member.get("status")
+
+        # این وضعیت‌ها عضو محسوب می‌شوند
+        if status in ["creator", "administrator", "member"]:
+            return True
+
+        # کاربر restricted ممکن است همچنان عضو کانال باشد
+        if status == "restricted":
+            return bool(member.get("is_member", False))
+
+        return False
+
+    except Exception:
+
+        logging.exception(
+            "Membership check failed for user %s",
+            chat_id
+        )
+
+        return False
+
+
+def membership_keyboard():
+
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "📢 عضویت در کانال MIRA",
+                    "url": CHANNEL_URL
+                }
+            ],
+            [
+                {
+                    "text": "✅ بررسی عضویت",
+                    "callback_data": "check_membership"
+                }
+            ]
+        ]
+    }
+
+
+def send_membership_gate(chat_id):
+
+    send(
+        chat_id,
+        "🔐 برای استفاده از خدمات MIRA ابتدا باید عضو کانال اصلی ما باشی.\n\n"
+        "بعد از عضویت، روی «بررسی عضویت» بزن تا ادامه بدیم. 👇",
+        membership_keyboard()
+    )
+
+
+def check_membership_and_continue(chat_id):
+
+    if is_channel_member(chat_id):
+
+        users[chat_id] = new_user()
+
+        send(
+            chat_id,
+            "درود 👋\n\n"
+            "به MIRA خوش اومدی. ✨\n\n"
+            "برای آشنایی بهتر با شرایط، هدف و نیازهای تحصیلی‌ات، "
+            "چند سؤال کوتاه ازت می‌پرسیم.\n\n"
+            "در پایان اطلاعاتت رو بررسی می‌کنی و فقط بعد از تأیید "
+            "برای تیم MIRA ارسال می‌شه.\n\n"
+            "🚀 بزن بریم!",
+            {
+                "keyboard": [
+                    [{"text": "🚀 بزن بریم"}]
+                ],
+                "resize_keyboard": True,
+                "one_time_keyboard": True
+            }
+        )
+
+        return True
+
+    send_membership_gate(chat_id)
+
+    return False
+
+
+# =========================================================
 # DATABASE
 # =========================================================
 
@@ -257,6 +361,21 @@ def send(chat_id, text, markup=None):
     return telegram("sendMessage", data)
 
 
+def answer_callback(callback_query_id, text=None):
+
+    data = {
+        "callback_query_id": callback_query_id
+    }
+
+    if text:
+        data["text"] = text
+
+    return telegram(
+        "answerCallbackQuery",
+        data
+    )
+
+
 # =========================================================
 # KEYBOARDS
 # =========================================================
@@ -336,7 +455,6 @@ def ask_question(chat_id):
 
     step = user["step"]
 
-    # تمام سؤالات تمام شده
     if step >= len(QUESTIONS):
 
         show_summary(chat_id)
@@ -387,7 +505,6 @@ def process_answer(chat_id, answer):
 
     question = QUESTIONS[step]
 
-    # گزینه‌ای
     if question["type"] == "options":
 
         if answer not in question["options"]:
@@ -400,10 +517,8 @@ def process_answer(chat_id, answer):
 
             return
 
-    # ذخیره پاسخ
     user["data"][question["key"]] = answer
 
-    # رفتن به سؤال بعدی
     user["step"] += 1
 
     logging.info(
@@ -505,6 +620,82 @@ def build_admin_report(chat_id, msg, data):
 
 
 # =========================================================
+# HANDLE CALLBACK QUERY
+# =========================================================
+
+def handle_callback_query(callback_query):
+
+    callback_id = callback_query.get("id")
+
+    data = callback_query.get(
+        "data",
+        ""
+    )
+
+    message = callback_query.get("message")
+
+    if not message:
+        return
+
+    chat_id = message["chat"]["id"]
+
+    # -----------------------------------------------------
+    # CHECK MEMBERSHIP
+    # -----------------------------------------------------
+
+    if data == "check_membership":
+
+        try:
+
+            answer_callback(
+                callback_id,
+                "در حال بررسی عضویت..."
+            )
+
+        except Exception:
+
+            logging.exception(
+                "Failed to answer callback query"
+            )
+
+        if is_channel_member(chat_id):
+
+            users[chat_id] = new_user()
+
+            send(
+                chat_id,
+                "✅ عضویتت تأیید شد.\n\n"
+                "حالا آماده‌ای؟ بزن بریم 🚀",
+                {
+                    "keyboard": [
+                        [{"text": "🚀 بزن بریم"}]
+                    ],
+                    "resize_keyboard": True,
+                    "one_time_keyboard": True
+                }
+            )
+
+        else:
+
+            try:
+
+                answer_callback(
+                    callback_id,
+                    "❌ هنوز عضویتت تأیید نشده."
+                )
+
+            except Exception:
+
+                logging.exception(
+                    "Failed to answer callback query"
+                )
+
+            send_membership_gate(chat_id)
+
+        return
+
+
+# =========================================================
 # HANDLE MESSAGE
 # =========================================================
 
@@ -523,25 +714,8 @@ def handle_message(msg):
 
     if text == "/start":
 
-        users[chat_id] = new_user()
-
-        send(
-            chat_id,
-            "درود 👋\n\n"
-            "به MIRA خوش اومدی. ✨\n\n"
-            "برای آشنایی بهتر با شرایط، هدف و نیازهای تحصیلی‌ات، "
-            "چند سؤال کوتاه ازت می‌پرسیم.\n\n"
-            "در پایان اطلاعاتت رو بررسی می‌کنی و فقط بعد از تأیید "
-            "برای تیم MIRA ارسال می‌شه.\n\n"
-            "🚀 بزن بریم!",
-            {
-                "keyboard": [
-                    [{"text": "🚀 بزن بریم"}]
-                ],
-                "resize_keyboard": True,
-                "one_time_keyboard": True
-            }
-        )
+        # Membership Gate
+        check_membership_and_continue(chat_id)
 
         return
 
@@ -569,6 +743,17 @@ def handle_message(msg):
     # -----------------------------------------------------
 
     if text == "🚀 بزن بریم":
+
+        # دوباره Membership را بررسی می‌کنیم
+        # تا امکان دور زدن Gate وجود نداشته باشد.
+
+        if not is_channel_member(chat_id):
+
+            users.pop(chat_id, None)
+
+            send_membership_gate(chat_id)
+
+            return
 
         users[chat_id] = new_user()
 
@@ -653,7 +838,6 @@ def handle_message(msg):
             ""
         )
 
-        # ذخیره در SQLite
         try:
 
             save_student(
@@ -669,7 +853,6 @@ def handle_message(msg):
             )
 
 
-        # گزارش ادمین
         report = build_admin_report(
             chat_id,
             msg,
@@ -721,7 +904,6 @@ def handle_message(msg):
                 remove_keyboard()
             )
 
-        # فرم تمام شده
         users.pop(chat_id, None)
 
         return
@@ -763,7 +945,6 @@ def handle_message(msg):
             "user_id"
         )
 
-        # اگر شماره متعلق به خود کاربر نیست
         if (
             contact_user_id is not None
             and contact_user_id != sender_id
@@ -882,11 +1063,21 @@ class Handler(BaseHTTPRequestHandler):
                 body.decode("utf-8")
             )
 
+            # پیام عادی
             msg = update.get("message")
 
             if msg:
-
                 handle_message(msg)
+
+            # کلیک روی دکمه‌های Inline
+            callback_query = update.get(
+                "callback_query"
+            )
+
+            if callback_query:
+                handle_callback_query(
+                    callback_query
+                )
 
             self.send_response(200)
             self.end_headers()
@@ -947,7 +1138,8 @@ def main():
                 {
                     "url": webhook_url,
                     "allowed_updates": [
-                        "message"
+                        "message",
+                        "callback_query"
                     ]
                 }
             )
