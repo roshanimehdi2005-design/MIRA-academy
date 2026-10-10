@@ -1,0 +1,17 @@
+
+services:
+  - type: worker
+    name: mira-academy-bot
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_CHAT_ID
+        value: "8853488501"
+      - key: ADMIN_USERNAME
+        value: teammira_admin
+      - key: CONSULTANTS_CHANNEL_URL
+        value: https://t.me/miraprivatecahnnel
